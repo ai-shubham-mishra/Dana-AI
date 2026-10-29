@@ -5,12 +5,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from langgraph.checkpoint.memory import MemorySaver
-
 from agent.runtime import build_default_agent
 from api.routes import chats, health, jobs, me
 from config.settings import Settings, get_settings
 from integrations.auth.jwt_secret import load_jwt_secret
+from integrations.checkpoint.mongo import create_mongo_checkpointer
 from integrations.mongo.client import create_mongo_client, ensure_indexes
 from integrations.storage.blob import create_blob_service, ensure_container
 
@@ -47,7 +46,9 @@ def create_app(
         app.state.mongo = mongo
         app.state.db = db
         app.state.blob = blob
-        app.state.checkpointer = MemorySaver()
+        app.state.checkpoint_client, app.state.checkpointer = await asyncio.to_thread(
+            create_mongo_checkpointer, settings.mongo_uri, settings.mongo_db
+        )
         app.state.agent_factory = agent_factory
         app.state.agent = None
         app.state.agent_lock = asyncio.Lock()
@@ -56,6 +57,7 @@ def create_app(
             yield
         finally:
             await blob.close()
+            app.state.checkpoint_client.close()
             mongo.close()
 
     app = FastAPI(title="Dana AI API", version="0.1.0", lifespan=lifespan)

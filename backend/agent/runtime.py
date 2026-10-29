@@ -2,10 +2,11 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from langgraph.types import Command
+
 from config.settings import Settings
 from integrations.keyvault.client import build_keyvault_reader
 from integrations.llm.foundry import build_claude_model
-
 from agent.components.todos import TODO_TOOL, todos_from_args
 from agent.factory import build_dana_agent
 
@@ -31,9 +32,44 @@ def _text_of(content: Any) -> str:
     )
 
 
-async def stream_turn(agent: Any, chat_id: str, content: str) -> AsyncIterator[tuple[str, dict]]:
-    config = {"configurable": {"thread_id": chat_id}}
-    payload = {"messages": [{"role": "user", "content": content}]}
+def _config(chat_id: str) -> dict:
+    return {"configurable": {"thread_id": chat_id}}
+
+
+def approval_payload(interrupt: Any) -> dict:
+    value = interrupt.value
+    allowed = {review["action_name"]: review["allowed_decisions"] for review in value["review_configs"]}
+    actions = [
+        {
+            "name": action["name"],
+            "args": action["args"],
+            "description": action.get("description", ""),
+            "allowed_decisions": allowed.get(action["name"], []),
+        }
+        for action in value["action_requests"]
+    ]
+    return {"interrupt_id": interrupt.id, "actions": actions}
+
+
+async def pending_approval(agent: Any, chat_id: str) -> dict | None:
+    snapshot = await agent.aget_state(_config(chat_id))
+    for interrupt in snapshot.interrupts:
+        return approval_payload(interrupt)
+    return None
+
+
+async def stream_turn(
+    agent: Any,
+    chat_id: str,
+    *,
+    content: str | None = None,
+    decisions: list[dict] | None = None,
+) -> AsyncIterator[tuple[str, dict]]:
+    config = _config(chat_id)
+    if decisions is not None:
+        payload: Any = Command(resume={"decisions": decisions})
+    else:
+        payload = {"messages": [{"role": "user", "content": content}]}
     async for event in agent.astream_events(payload, config=config, version="v2"):
         kind = event["event"]
         data = event.get("data") or {}
@@ -49,3 +85,6 @@ async def stream_turn(agent: Any, chat_id: str, content: str) -> AsyncIterator[t
             yield "tool_call", {"id": str(event["run_id"]), "name": name, "args": args}
         elif kind == "on_tool_end":
             yield "tool_result", {"id": str(event["run_id"]), "name": event.get("name", "")}
+    pending = await pending_approval(agent, chat_id)
+    if pending is not None:
+        yield "interrupt", pending
