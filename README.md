@@ -11,14 +11,16 @@ Frontend styling follows the analytics-studio branding.
 | 1 | Docker Compose stack (Mongo, Azurite), FastAPI with JWT auth and org membership checks, Next.js shell | Done |
 | Nav | Stacked Chat and Jobs navigation (tabs, no toggle) | Done |
 | 2 | Read-only Key Vault config, Claude via Foundry, deepagents chat with SSE streaming, todos, tool-call events, Mongo persistence | Done ([#9](https://github.com/ai-shubham-mishra/Dana-AI/issues/9)) |
-| 3 (first slice) | HITL approvals (`ask_user`, approve/edit/reject) and durable Mongo-backed checkpoints | In progress ([#15](https://github.com/ai-shubham-mishra/Dana-AI/issues/15)) |
+| 3 (first slice) | HITL approvals (`ask_user`, approve/edit/reject) and durable Mongo-backed checkpoints | Done ([#15](https://github.com/ai-shubham-mishra/Dana-AI/issues/15)) |
+| 4 | Local MMM training on the bundled sample dataset: approval-gated job, subprocess trainer, live progress on the Jobs tab, model artifact in Azurite | In progress ([#31](https://github.com/ai-shubham-mishra/Dana-AI/issues/31)) |
 
 ## Architecture
 
 - `backend/`: FastAPI service
   - `api/`: routes (`/api/v1/me`, `/chats`, `/jobs`, chat approvals) and the app factory
   - `agent/`: deepagents orchestrator. Folders: `config/` (`AGENTS.md` memory and `parent_skill.md` playbook), `skills/` (mirrors `tools/`: one folder per domain or tool, each with `SKILL.md`; folders use hyphens because skill names must be lowercase with hyphens), `tools/` (one module per tool, grouped as `system_ops/` (connectors, hitl) and `ml_ops/` (chores, ml/training, ml/data_prep); `tools/registry.py` lists every tool and the HITL policy), `middleware/` (custom deepagents middleware, including the todo helpers)
-  - `integrations/`: `auth/` (JWT verification and the Key Vault JWT secret loader), `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs), `checkpoint/` (Mongo-backed LangGraph checkpointer)
+  - `integrations/`: `auth/` (JWT verification and the Key Vault JWT secret loader), `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs, job events), `checkpoint/` (Mongo-backed LangGraph checkpointer), `training/` (MMM training service, subprocess trainer, progress protocol, request validation), `storage/` (Azurite blob storage)
+  - `resources/training/mmm/`: bundled sample MMM dataset (`mmm_demo.csv`) and its config (`mmm_demo.yaml`)
   - `config/`: settings loaded from `backend/.env`
   - `tests/`: pytest suite
 - `frontend/`: Next.js app (React, Tailwind, TanStack Query)
@@ -112,6 +114,17 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - The selected chat is saved in `localStorage` under `dana.chatSelection`. A page reload reopens that chat.
 - If the saved chat is no longer in your chat list (deleted, or saved by another account on the same browser), the selection is cleared and the empty state shows.
 - Choosing **New chat** clears the saved selection.
+
+## Model training (MMM)
+
+- The agent calls `start_training_job` with a model, KPI, channels, and date range. Approval (HITL) is required first, like any gated action.
+- Requests are checked before queuing. The KPI must be `sales`, channels must match the bundled dataset (case-insensitive), and the date range must be `YYYY-MM-DD to YYYY-MM-DD`. Invalid requests are returned to the agent as text.
+- An approved job is queued in the `jobs` collection and runs as a local subprocess (`python -m integrations.training.mmm.cli`). Jobs run one at a time. The API process never imports PyMC.
+- The trainer reports progress on stdout. The service stores stage, percent, and message on the job and in `job_events`. Stages: loading data, building model, sampling, diagnostics, posterior predictive, saving model.
+- On success, the model (`mmm_model.nc`) is uploaded to Azurite at `models/{org_id}/{user_id}/{job_id}/mmm_model.nc`. The job stores the artifact name and size. The blob path is not exposed through the API. On failure, the job stores the error and the last stderr lines.
+- `GET /api/v1/jobs` lists your jobs. `GET /api/v1/jobs/{id}` returns parameters, metrics, the artifact, and the event timeline. Other tenants get 404.
+- The Jobs tab shows a progress bar for each job. Click a row to open its details.
+- A full default run (4 chains, 2000 tuning steps) is slow. The tests use small budgets. To run the trainer by hand: `cd backend && PYTHONPATH=. ./.venv/bin/python -m integrations.training.mmm.cli --data resources/training/mmm/mmm_demo.csv --config resources/training/mmm/mmm_demo.yaml --output-dir var/training/manual --chains 2 --tune 200 --draws 200`.
 
 ## Git workflow
 

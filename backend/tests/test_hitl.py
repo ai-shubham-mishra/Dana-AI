@@ -7,16 +7,22 @@ from langchain_core.messages import AIMessage, ToolMessage
 from api.main import create_app
 from tests.test_api import ORG_A, USER_2, auth, make_settings, member, mint, raw_db, settings, static_secret  # noqa: F401
 from tests.test_chat_stream import REPLY, new_chat, parse_sse, scripted_factory
+from tests.test_training import fake_trainer
 
 HEADERS = auth(mint())
 OTHER_HEADERS = auth(mint(user=USER_2))
-START_ARGS = {"model": "mmm", "kpi": "sales", "channels": ["meta", "google"], "date_range": "2024-01-01 to 2024-12-31"}
+START_ARGS = {"model": "mmm", "kpi": "sales", "channels": ["TV", "YouTube"], "date_range": "2024-01-01 to 2024-12-31"}
 ASK_CALL = AIMessage(content="", tool_calls=[{"name": "ask_user", "args": {"question": "Which KPI?"}, "id": "call-ask-1"}])
-START_CALL = AIMessage(content="", tool_calls=[{"name": "initiate_ml_training", "args": START_ARGS, "id": "call-start-1"}])
+START_CALL = AIMessage(content="", tool_calls=[{"name": "start_training_job", "args": START_ARGS, "id": "call-start-1"}])
 
 
 def make_app(settings, script):
-    return create_app(settings, agent_factory=scripted_factory(script), jwt_secret_loader=static_secret)
+    return create_app(
+        settings,
+        agent_factory=scripted_factory(script),
+        jwt_secret_loader=static_secret,
+        training_command_factory=fake_trainer("ok"),
+    )
 
 
 @pytest.fixture()
@@ -91,24 +97,28 @@ def test_approve_runs_the_gated_tool(open_client):
     client = open_client([START_CALL, REPLY])
     chat_id = new_chat(client, HEADERS)
     action = event(send(client, chat_id), "interrupt")["actions"][0]
-    assert action["name"] == "initiate_ml_training"
+    assert action["name"] == "start_training_job"
     assert action["allowed_decisions"] == ["approve", "edit", "reject"]
     events = parse_sse(resume(client, chat_id, [{"type": "approve"}]).text)
-    assert event(events, "tool_result")["name"] == "initiate_ml_training"
+    assert event(events, "tool_result")["name"] == "start_training_job"
     assert "done" in kinds(events)
-    assert "kpi=sales" in tool_content(client, chat_id, "call-start-1")
+    content = tool_content(client, chat_id, "call-start-1")
+    assert "is queued on the bundled sample MMM dataset" in content
+    job_id = content.split("Training job ")[1].split(" ")[0]
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=HEADERS).status_code == 200
 
 
 def test_edit_changes_arguments_before_the_tool_runs(open_client):
     client = open_client([START_CALL, REPLY])
     chat_id = new_chat(client, HEADERS)
     send(client, chat_id)
-    edited = {"name": "initiate_ml_training", "args": {**START_ARGS, "kpi": "revenue"}}
+    edited = {"name": "start_training_job", "args": {**START_ARGS, "kpi": "revenue"}}
     res = resume(client, chat_id, [{"type": "edit", "edited_action": edited}])
     assert res.status_code == 200
     content = tool_content(client, chat_id, "call-start-1")
-    assert "kpi=revenue" in content
-    assert "kpi=sales" not in content
+    assert "invalid" in content
+    assert "revenue" in content
+    assert "is queued" not in content
 
 
 def test_reject_returns_the_reason_to_the_model(open_client):
@@ -167,4 +177,4 @@ def test_pending_approval_survives_app_restart(raw_db, member):
         pending = second.get(f"/api/v1/chats/{chat_id}/pending", headers=HEADERS).json()
         assert pending["interrupt_id"] == pending_id
         assert resume(second, chat_id, [{"type": "approve"}]).status_code == 200
-        assert "kpi=sales" in tool_content(second, chat_id, "call-start-1")
+        assert "is queued" in tool_content(second, chat_id, "call-start-1")

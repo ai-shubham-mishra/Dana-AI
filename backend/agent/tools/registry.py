@@ -10,6 +10,7 @@ from agent.tools.ml_ops.ml.training.create_ml_training_job import CreateMLTraini
 from agent.tools.ml_ops.ml.training.create_training_script import CreateTrainingScriptTool
 from agent.tools.ml_ops.ml.training.initiate_ml_training import InitiateMLTrainingTool
 from agent.tools.ml_ops.ml.training.save_ml_assets import SaveMLAssetsTool
+from agent.tools.ml_ops.ml.training.start_training_job import StartTrainingJobTool
 from agent.tools.system_ops.connectors.list_channels_within_connector import ListChannelsWithinConnectorTool
 from agent.tools.system_ops.connectors.list_connectors import ListConnectorsTool
 from agent.tools.system_ops.hitl.ask_user import AskUserTool
@@ -23,6 +24,7 @@ TOOLS = [
     CheckLatestModelTool(),
     CheckLastModelRunTool(),
     InitiateMLTrainingTool(),
+    StartTrainingJobTool(),
     CreateMLTrainingJobTool(),
     SaveMLAssetsTool(),
     CreateTrainingScriptTool(),
