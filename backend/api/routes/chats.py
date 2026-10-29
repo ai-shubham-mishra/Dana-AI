@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from agent.request_context import parse_client_timezone
 from agent.runtime import pending_approval, stream_turn
+from agent.tools.system_ops.hitl.ask_user import check_answer
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.keyvault.client import KeyVaultError
 from integrations.training.scope import JobScope
@@ -65,14 +66,15 @@ class EditedAction(BaseModel):
 class DecisionIn(BaseModel):
     type: Literal["approve", "edit", "reject", "respond"]
     message: str | None = Field(default=None, max_length=MESSAGE_MAX)
+    value: Any | None = None
     edited_action: EditedAction | None = None
 
     @model_validator(mode="after")
     def _required_fields(self) -> "DecisionIn":
         if self.type == "edit" and self.edited_action is None:
             raise ValueError("edit requires edited_action")
-        if self.type == "respond" and not (self.message or "").strip():
-            raise ValueError("respond requires message")
+        if self.type == "respond" and self.value is None and not (self.message or "").strip():
+            raise ValueError("respond requires message or value")
         return self
 
 
@@ -231,25 +233,38 @@ async def resume_chat(
         pending = await pending_approval(agent, chat_id)
         if pending is None:
             raise HTTPException(status_code=409, detail="No pending approval for this chat")
-        _check_decisions(pending, body.decisions)
+        decisions = _check_decisions(pending, body.decisions)
     except BaseException:
         active.discard(chat_id)
         raise
 
     scope = {"org_id": principal.org_id, "user_id": principal.user_id, "chat_id": chat_id}
-    decisions = [d.model_dump(exclude_none=True) for d in body.decisions]
     return _stream_response(request, scope, agent, decisions=decisions, timezone=_client_timezone(request))
 
 
-def _check_decisions(pending: dict, decisions: list[DecisionIn]) -> None:
+def _check_decisions(pending: dict, decisions: list[DecisionIn]) -> list[dict]:
     actions = pending["actions"]
     if len(decisions) != len(actions):
         raise HTTPException(status_code=422, detail=f"Expected {len(actions)} decision(s), got {len(decisions)}")
+    normalized: list[dict] = []
     for action, decision in zip(actions, decisions, strict=True):
         if decision.type not in action["allowed_decisions"]:
             raise HTTPException(status_code=422, detail=f"'{decision.type}' is not allowed for {action['name']}")
         if decision.type == "edit" and decision.edited_action.name != action["name"]:
             raise HTTPException(status_code=422, detail="edited_action.name must match the pending action")
+        if decision.type == "respond" and action["name"] == "ask_user":
+            normalized.append({"type": "respond", "message": _typed_answer(action, decision)})
+        else:
+            normalized.append(decision.model_dump(exclude_none=True))
+    return normalized
+
+
+def _typed_answer(action: dict, decision: DecisionIn) -> str:
+    raw = decision.value if decision.value is not None else decision.message
+    try:
+        return check_answer(action["args"], raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 def split_reply(text: str, boundary: int) -> tuple[str, str]:

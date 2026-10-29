@@ -42,6 +42,7 @@ export type PendingApproval = {
 export type Decision = {
   type: DecisionType;
   message?: string;
+  value?: unknown;
   edited_action?: { name: string; args: Record<string, unknown> };
 };
 

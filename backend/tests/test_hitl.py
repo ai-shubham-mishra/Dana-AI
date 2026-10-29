@@ -178,3 +178,66 @@ def test_pending_approval_survives_app_restart(raw_db, member):
         assert pending["interrupt_id"] == pending_id
         assert resume(second, chat_id, [{"type": "approve"}]).status_code == 200
         assert "is queued" in tool_content(second, chat_id, "call-start-1")
+
+
+def ask_call(call_id, **args):
+    return AIMessage(content="", tool_calls=[{"name": "ask_user", "args": {"question": "Pick", **args}, "id": call_id}])
+
+
+SELECT_ARGS = {"response_type": "single_select", "options": ["meta_ads", "google_ads"]}
+MULTI_ARGS = {"response_type": "multi_select", "options": ["TV", "YouTube", "Search"]}
+
+
+def test_interrupt_carries_response_type_and_options(open_client):
+    client = open_client([ask_call("call-typed-1", **SELECT_ARGS), REPLY])
+    chat_id = new_chat(client, HEADERS)
+    action = event(send(client, chat_id), "interrupt")["actions"][0]
+    assert action["args"]["response_type"] == "single_select"
+    assert action["args"]["options"] == ["meta_ads", "google_ads"]
+
+
+def test_single_select_answer_reaches_the_agent_as_json(open_client):
+    client = open_client([ask_call("call-typed-2", **SELECT_ARGS), REPLY])
+    chat_id = new_chat(client, HEADERS)
+    send(client, chat_id)
+    res = resume(client, chat_id, [{"type": "respond", "value": "google_ads"}])
+    assert res.status_code == 200, res.text
+    assert tool_content(client, chat_id, "call-typed-2") == '{"answer": "google_ads"}'
+
+
+def test_multi_select_answer_reaches_the_agent_as_json(open_client):
+    client = open_client([ask_call("call-typed-3", **MULTI_ARGS), REPLY])
+    chat_id = new_chat(client, HEADERS)
+    send(client, chat_id)
+    assert resume(client, chat_id, [{"type": "respond", "value": ["TV", "Search"]}]).status_code == 200
+    assert tool_content(client, chat_id, "call-typed-3") == '{"answer": ["TV", "Search"]}'
+
+
+@pytest.mark.parametrize(
+    "args, value",
+    [
+        (SELECT_ARGS, "radio"),
+        (SELECT_ARGS, ["meta_ads"]),
+        (MULTI_ARGS, []),
+        (MULTI_ARGS, ["TV", "TV"]),
+        (MULTI_ARGS, ["TV", "Radio"]),
+        ({"response_type": "number"}, "12"),
+        ({"response_type": "number"}, True),
+        ({"response_type": "boolean"}, "yes"),
+        ({"response_type": "text"}, "   "),
+    ],
+)
+def test_invalid_typed_answers_are_rejected_and_run_stays_paused(open_client, args, value):
+    client = open_client([ask_call("call-typed-4", **args), REPLY])
+    chat_id = new_chat(client, HEADERS)
+    send(client, chat_id)
+    assert resume(client, chat_id, [{"type": "respond", "value": value}]).status_code == 422
+    assert client.get(f"/api/v1/chats/{chat_id}/pending", headers=HEADERS).json() is not None
+
+
+def test_typed_answer_without_options_falls_back_to_text(open_client):
+    client = open_client([ask_call("call-typed-5", response_type="single_select"), REPLY])
+    chat_id = new_chat(client, HEADERS)
+    send(client, chat_id)
+    assert resume(client, chat_id, [{"type": "respond", "message": "Revenue"}]).status_code == 200
+    assert tool_content(client, chat_id, "call-typed-5") == "Revenue"
