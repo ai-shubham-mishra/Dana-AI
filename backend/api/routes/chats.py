@@ -8,9 +8,9 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from agent.runtime import stream_turn
+from agent.runtime import pending_approval, stream_turn
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.keyvault.client import KeyVaultError
 
@@ -21,6 +21,7 @@ LIST_LIMIT = 50
 DEFAULT_TITLE = "New chat"
 TITLE_MAX = 60
 MESSAGE_MAX = 8000
+MAX_DECISIONS = 20
 
 
 class ChatSummary(BaseModel):
@@ -39,6 +40,41 @@ class MessageOut(BaseModel):
 
 class MessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=MESSAGE_MAX)
+
+
+class PendingAction(BaseModel):
+    name: str
+    args: dict[str, Any]
+    description: str = ""
+    allowed_decisions: list[str]
+
+
+class PendingApproval(BaseModel):
+    interrupt_id: str
+    actions: list[PendingAction]
+
+
+class EditedAction(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    args: dict[str, Any]
+
+
+class DecisionIn(BaseModel):
+    type: Literal["approve", "edit", "reject", "respond"]
+    message: str | None = Field(default=None, max_length=MESSAGE_MAX)
+    edited_action: EditedAction | None = None
+
+    @model_validator(mode="after")
+    def _required_fields(self) -> "DecisionIn":
+        if self.type == "edit" and self.edited_action is None:
+            raise ValueError("edit requires edited_action")
+        if self.type == "respond" and not (self.message or "").strip():
+            raise ValueError("respond requires message")
+        return self
+
+
+class ResumeIn(BaseModel):
+    decisions: list[DecisionIn] = Field(min_length=1, max_length=MAX_DECISIONS)
 
 
 def _now() -> datetime:
@@ -139,6 +175,8 @@ async def send_message(
     active.add(chat_id)
     try:
         agent = await _get_agent(request)
+        if await pending_approval(agent, chat_id) is not None:
+            raise HTTPException(status_code=409, detail="Resolve the pending approval before sending a message")
         db = request.app.state.db
         owner = {"org_id": principal.org_id, "user_id": principal.user_id}
         scope = {**owner, "chat_id": chat_id}
@@ -155,19 +193,85 @@ async def send_message(
         active.discard(chat_id)
         raise
 
+    return _stream_response(request, scope, agent, content=body.content)
+
+
+@router.get("/chats/{chat_id}/pending", response_model=PendingApproval | None)
+async def get_pending(
+    chat_id: str,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> PendingApproval | None:
+    await _owned_chat(request, principal, chat_id)
+    agent = await _get_agent(request)
+    return await pending_approval(agent, chat_id)
+
+
+@router.post("/chats/{chat_id}/resume")
+async def resume_chat(
+    chat_id: str,
+    body: ResumeIn,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> StreamingResponse:
+    await _owned_chat(request, principal, chat_id)
+    active: set[str] = request.app.state.active_chats
+    if chat_id in active:
+        raise HTTPException(status_code=409, detail="A run is already active for this chat")
+    active.add(chat_id)
+    try:
+        agent = await _get_agent(request)
+        pending = await pending_approval(agent, chat_id)
+        if pending is None:
+            raise HTTPException(status_code=409, detail="No pending approval for this chat")
+        _check_decisions(pending, body.decisions)
+    except BaseException:
+        active.discard(chat_id)
+        raise
+
+    scope = {"org_id": principal.org_id, "user_id": principal.user_id, "chat_id": chat_id}
+    decisions = [d.model_dump(exclude_none=True) for d in body.decisions]
+    return _stream_response(request, scope, agent, decisions=decisions)
+
+
+def _check_decisions(pending: dict, decisions: list[DecisionIn]) -> None:
+    actions = pending["actions"]
+    if len(decisions) != len(actions):
+        raise HTTPException(status_code=422, detail=f"Expected {len(actions)} decision(s), got {len(decisions)}")
+    for action, decision in zip(actions, decisions, strict=True):
+        if decision.type not in action["allowed_decisions"]:
+            raise HTTPException(status_code=422, detail=f"'{decision.type}' is not allowed for {action['name']}")
+        if decision.type == "edit" and decision.edited_action.name != action["name"]:
+            raise HTTPException(status_code=422, detail="edited_action.name must match the pending action")
+
+
+def _stream_response(
+    request: Request,
+    scope: dict[str, str],
+    agent: Any,
+    **turn: Any,
+) -> StreamingResponse:
+    db = request.app.state.db
+    active: set[str] = request.app.state.active_chats
+    chat_id = scope["chat_id"]
+
     async def events() -> AsyncIterator[str]:
         reply: list[str] = []
+        paused = False
         try:
-            async for event, data in stream_turn(agent, chat_id, body.content):
+            async for event, data in stream_turn(agent, chat_id, **turn):
                 if event == "token":
                     reply.append(data["text"])
+                if event == "interrupt":
+                    paused = True
                 yield _sse(event, data)
             text = "".join(reply)
             if text:
                 await db.messages.insert_one(
                     {"id": uuid.uuid4().hex, **scope, "role": "assistant", "content": text, "created_at": _now()}
                 )
-            yield _sse("done", {"chat_id": chat_id})
+            if not paused:
+                yield _sse("done", {"chat_id": chat_id})
         except Exception:
             logger.exception("agent turn failed for chat %s", chat_id)
             yield _sse("error", {"message": "The agent run failed. Please try again."})

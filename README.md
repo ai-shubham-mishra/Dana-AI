@@ -10,14 +10,15 @@ Frontend styling follows the analytics-studio branding.
 |---|---|---|
 | 1 | Docker Compose stack (Mongo, Azurite), FastAPI with JWT auth and org membership checks, Next.js shell | Done |
 | Nav | Stacked Chat and Jobs navigation (tabs, no toggle) | Done |
-| 2 | Read-only Key Vault config, Claude via Foundry, deepagents chat with SSE streaming, todos, tool-call events, Mongo persistence | In progress ([#9](https://github.com/ai-shubham-mishra/Dana-AI/issues/9)) |
+| 2 | Read-only Key Vault config, Claude via Foundry, deepagents chat with SSE streaming, todos, tool-call events, Mongo persistence | Done ([#9](https://github.com/ai-shubham-mishra/Dana-AI/issues/9)) |
+| 3 (first slice) | HITL approvals (`ask_user`, approve/edit/reject) and durable Mongo-backed checkpoints | In progress ([#15](https://github.com/ai-shubham-mishra/Dana-AI/issues/15)) |
 
 ## Architecture
 
 - `backend/`: FastAPI service
-  - `api/`: routes (`/api/v1/me`, `/chats`, `/jobs`) and the app factory
-  - `agent/`: deepagents orchestrator. Folders: `config/` (`AGENTS.md` memory and `parent_skill.md` playbook), `skills/` (one folder per skill with `SKILL.md`), `tools/` (per-domain tools), `components/` (todos, hitl, and other per-domain components), `middleware/` (custom deepagents middleware)
-  - `integrations/`: `auth/` (JWT verification and the Key Vault JWT secret loader), `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs)
+  - `api/`: routes (`/api/v1/me`, `/chats`, `/jobs`, chat approvals) and the app factory
+  - `agent/`: deepagents orchestrator. Folders: `config/` (`AGENTS.md` memory and `parent_skill.md` playbook), `skills/` (one folder per skill with `SKILL.md`), `tools/` (per-domain tools, e.g. `training/`), `components/` (todos, hitl policy and `ask_user`, and other per-domain components), `middleware/` (custom deepagents middleware)
+  - `integrations/`: `auth/` (JWT verification and the Key Vault JWT secret loader), `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs), `checkpoint/` (Mongo-backed LangGraph checkpointer)
   - `config/`: settings loaded from `backend/.env`
   - `tests/`: pytest suite
 - `frontend/`: Next.js app (React, Tailwind, TanStack Query)
@@ -91,6 +92,14 @@ The backend reads secrets through a read-only service principal. It only calls `
 The "FOUNDARY" spelling is intentional and matches the DeepAgent vault. If the bootstrap variables are missing, the chat endpoints return 503 and do not fall back to any other credential.
 
 To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/bin/python scripts/seed_dev.py --user-id U --org-id O --mint-token`.
+
+## Approvals (HITL) and checkpoints
+
+- The agent pauses before a gated action and emits an `interrupt` SSE event instead of `done`. The payload lists each action with its `allowed_decisions`.
+- `GET /api/v1/chats/{id}/pending` returns the pending approval, or `null`.
+- `POST /api/v1/chats/{id}/resume` with `{"decisions": [...]}` continues the run. Decision types: `approve`, `edit` (with `edited_action: {name, args}`), `reject` (optional `message`), and `respond` (the user's answer for `ask_user`).
+- `ask_user` accepts only `respond`. `start_training_job` accepts `approve`, `edit`, or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
+- Run state is stored in the `agent_checkpoints` and `agent_checkpoint_writes` collections in Mongo, so a pending approval survives a backend restart.
 
 ## Git workflow
 
