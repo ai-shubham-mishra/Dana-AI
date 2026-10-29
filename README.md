@@ -48,7 +48,7 @@ Frontend styling follows the analytics-studio branding.
    python3 -m venv .venv
    ./.venv/bin/pip install -r requirements.txt
    cp .env.example .env   # then fill in the values listed below
-   ./.venv/bin/uvicorn api.main:app --reload --port 8000
+   ./.venv/bin/uvicorn api.main:app --reload --port 8001
    ```
 
 3. Frontend (in a second terminal):
@@ -59,7 +59,7 @@ Frontend styling follows the analytics-studio branding.
    npm run dev
    ```
 
-   Open http://localhost:3000. Paste a valid access token into the sign-in dialog. The frontend reads `NEXT_PUBLIC_API_BASE_URL` and defaults to `http://localhost:8000`.
+   Open http://localhost:3000. Paste a valid access token into the sign-in dialog. The frontend reads `NEXT_PUBLIC_API_BASE_URL` and defaults to `http://localhost:8001`.
 
 4. Tests and checks:
 
