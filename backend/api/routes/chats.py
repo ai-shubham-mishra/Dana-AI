@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 from agent.runtime import pending_approval, stream_turn
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.keyvault.client import KeyVaultError
+from integrations.training.scope import JobScope
 
 router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
@@ -260,13 +261,19 @@ def _stream_response(
     db = request.app.state.db
     active: set[str] = request.app.state.active_chats
     chat_id = scope["chat_id"]
+    job_scope = JobScope(
+        service=request.app.state.training,
+        org_id=scope["org_id"],
+        user_id=scope["user_id"],
+        chat_id=chat_id,
+    )
 
     async def events() -> AsyncIterator[str]:
         reply: list[str] = []
         boundary = 0
         paused = False
         try:
-            async for event, data in stream_turn(agent, chat_id, **turn):
+            async for event, data in stream_turn(agent, chat_id, job_scope=job_scope, **turn):
                 if event == "token":
                     reply.append(data["text"])
                 if event in ("tool_call", "tool_result"):

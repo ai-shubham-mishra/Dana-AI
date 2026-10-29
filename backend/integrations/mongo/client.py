@@ -15,3 +15,4 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.messages.create_index(
         [("org_id", ASCENDING), ("user_id", ASCENDING), ("chat_id", ASCENDING), ("created_at", ASCENDING)]
     )
+    await db.job_events.create_index([("job_id", ASCENDING), ("created_at", ASCENDING)])
