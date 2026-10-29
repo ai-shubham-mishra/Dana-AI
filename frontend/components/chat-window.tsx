@@ -48,30 +48,71 @@ const CAPABILITIES = [
   },
 ];
 
-function MessageBubble({
-  role,
-  content,
-  thinking,
-}: {
-  role: "user" | "assistant";
-  content: string;
-  thinking?: string | null;
-}) {
-  if (role === "user") {
-    return (
-      <div className="ml-auto max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cta px-4 py-2.5 text-sm text-cta-foreground">
-        {content}
-      </div>
-    );
+// One assistant segment. A HITL pause or resume starts a new segment within the same reply.
+type TurnPart = {
+  id: string;
+  thinking: string;
+  tools: ToolChip[];
+  todos: TodoItem[];
+  answer: string;
+  live: boolean;
+  streamed: boolean;
+};
+
+type TimelineItem =
+  | { kind: "user"; id: string; content: string }
+  | { kind: "turn"; id: string; parts: TurnPart[] };
+
+function savedPart(message: ChatMessage): TurnPart {
+  return {
+    id: message.id,
+    thinking: message.thinking ?? "",
+    tools: [],
+    todos: [],
+    answer: message.content,
+    live: false,
+    streamed: false,
+  };
+}
+
+function runPart(run: RunState): TurnPart {
+  const { process, answer } = splitReply(run.text, run.boundary);
+  return {
+    id: run.id,
+    thinking: process,
+    tools: run.tools,
+    todos: run.todos,
+    answer,
+    live: !run.done,
+    streamed: true,
+  };
+}
+
+// Consecutive assistant segments (saved or live) merge into one turn so they share a single Thinking block.
+function buildTimeline(history: ChatMessage[] | undefined, runs: RunState[]): TimelineItem[] {
+  const timeline: TimelineItem[] = [];
+  const pushPart = (part: TurnPart) => {
+    const empty = !part.live && !part.thinking && !part.answer && part.tools.length === 0 && part.todos.length === 0;
+    if (empty) return;
+    const last = timeline[timeline.length - 1];
+    if (last?.kind === "turn") last.parts.push(part);
+    else timeline.push({ kind: "turn", id: part.id, parts: [part] });
+  };
+  for (const message of history ?? []) {
+    if (message.role === "user") timeline.push({ kind: "user", id: message.id, content: message.content });
+    else pushPart(savedPart(message));
   }
+  for (const run of runs) {
+    if (run.userContent !== null) timeline.push({ kind: "user", id: `${run.id}-user`, content: run.userContent });
+    pushPart(runPart(run));
+  }
+  return timeline;
+}
+
+function UserBubble({ content }: { content: string }) {
   return (
-    <div className="min-w-0 space-y-3">
-      {thinking && (
-        <ThinkingBlock live={false} hasContent>
-          <Markdown className="text-xs text-muted-foreground">{thinking}</Markdown>
-        </ThinkingBlock>
-      )}
-      {content && <Markdown>{content}</Markdown>}
+    <div className="ml-auto max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cta px-4 py-2.5 text-sm text-cta-foreground">
+      {content}
     </div>
   );
 }
@@ -102,39 +143,60 @@ function TodoPanel({ todos }: { todos: TodoItem[] }) {
   );
 }
 
-function AssistantTurn({ run }: { run: RunState }) {
-  const tools = run.tools.filter((tool) => !HIDDEN_TOOLS.has(tool.name));
-  const { process, answer } = splitReply(run.text, run.boundary);
-  const running = tools.find((tool) => !tool.done);
-  const status = answer
+function AssistantTurn({ parts }: { parts: TurnPart[] }) {
+  const live = parts.some((part) => part.live);
+  const active = [...parts].reverse().find((part) => part.live);
+  const activeTool = active?.tools.find((tool) => !tool.done && !HIDDEN_TOOLS.has(tool.name));
+  const status = active?.answer
     ? "Writing response…"
-    : running
-      ? `Running ${running.name.replace(/_/g, " ")}…`
-      : process
+    : activeTool
+      ? `Running ${activeTool.name.replace(/_/g, " ")}…`
+      : active?.thinking
         ? "Reasoning…"
         : "Thinking…";
-  const hasProcess = tools.length > 0 || run.todos.length > 0 || process.length > 0;
+  const hasProcess = parts.some(
+    (part) => part.tools.some((tool) => !HIDDEN_TOOLS.has(tool.name)) || part.todos.length > 0 || part.thinking,
+  );
   return (
     <div className="min-w-0 space-y-3">
-      <ThinkingBlock live={!run.done} status={status} hasContent={hasProcess} defaultOpen>
-          {tools.length > 0 && (
-            <ul className="flex flex-wrap gap-2">
-              {tools.map((tool) => (
-                <li
-                  key={tool.id}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs"
-                >
-                  <Wrench className="size-3 text-primary" />
-                  <span>{tool.name.replace(/_/g, " ")}</span>
-                  <ToolStatusIcon done={tool.done} />
-                </li>
-              ))}
-            </ul>
-          )}
-          {run.todos.length > 0 && <TodoPanel todos={run.todos} />}
-          {process && <ReasoningTicker text={process} />}
-        </ThinkingBlock>
-        {answer && <Markdown animateWords>{answer}</Markdown>}
+      <ThinkingBlock live={live} status={status} hasContent={hasProcess} defaultOpen={parts.some((part) => part.streamed)}>
+        {parts.map((part) => {
+          const tools = part.tools.filter((tool) => !HIDDEN_TOOLS.has(tool.name));
+          return (
+            <Fragment key={part.id}>
+              {tools.length > 0 && (
+                <ul className="flex flex-wrap gap-2">
+                  {tools.map((tool) => (
+                    <li
+                      key={tool.id}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs"
+                    >
+                      <Wrench className="size-3 text-primary" />
+                      <span>{tool.name.replace(/_/g, " ")}</span>
+                      <ToolStatusIcon done={tool.done} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {part.todos.length > 0 && <TodoPanel todos={part.todos} />}
+              {part.thinking &&
+                (part.live ? (
+                  <ReasoningTicker text={part.thinking} />
+                ) : (
+                  <Markdown className="text-xs text-muted-foreground">{part.thinking}</Markdown>
+                ))}
+            </Fragment>
+          );
+        })}
+      </ThinkingBlock>
+      {parts.map(
+        (part) =>
+          part.answer && (
+            <Markdown key={part.id} animateWords={part.live}>
+              {part.answer}
+            </Markdown>
+          ),
+      )}
     </div>
   );
 }
@@ -226,6 +288,7 @@ function ChatThread({
   const history = firstBase === undefined ? messages.data : messages.data?.slice(0, firstBase);
   const latest = runs[runs.length - 1];
   const historyCount = history?.length ?? 0;
+  const timeline = buildTimeline(history, runs);
   const latestText = latest?.text ?? "";
   const latestSteps = (latest?.tools.length ?? 0) + (latest?.todos.length ?? 0);
 
@@ -239,20 +302,18 @@ function ChatThread({
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
           {messages.isPending && <p className="text-sm text-muted-foreground">Loading conversation…</p>}
           {messages.error && <p className="text-sm text-destructive">{messages.error.message}</p>}
-          {history?.map((message) => (
-            <MessageBubble key={message.id} role={message.role} content={message.content} thinking={message.thinking} />
-          ))}
+          {timeline.map((item) =>
+            item.kind === "user" ? (
+              <UserBubble key={item.id} content={item.content} />
+            ) : (
+              <AssistantTurn key={item.id} parts={item.parts} />
+            ),
+          )}
           {history?.length === 0 && runs.length === 0 && (
             <p className="text-center text-sm text-muted-foreground">
               Describe the outcome you want to model. Dana will ask about your data before training.
             </p>
           )}
-          {runs.map((run) => (
-            <Fragment key={run.id}>
-              {run.userContent !== null && <MessageBubble role="user" content={run.userContent} />}
-              <AssistantTurn run={run} />
-            </Fragment>
-          ))}
           {pendingApproval && (
             <ApprovalPanel
               key={pendingApproval.interrupt_id}
