@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
@@ -27,6 +27,15 @@ class Settings(BaseSettings):
 
     blob_connection_string: str = "UseDevelopmentStorage=true"
     blob_container: str = "dana-ai-files"
+
+    # Key Vault bootstrap (read-only service principal). Secrets are never read from .env.
+    azure_keyvault_url: str | None = None
+    azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    azure_client_secret: SecretStr | None = None
+
+    llm_model: str = "claude-sonnet-5-5"
+    agent_root: Path = BACKEND_ROOT / "agent"
 
 
 @lru_cache
