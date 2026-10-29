@@ -85,7 +85,18 @@ export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
           </div>
         )}
         <ThemeToggle className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" />
-        {token ? (
+        {(!token || me.error) && (
+          <button
+            type="button"
+            onClick={onSignIn}
+            aria-label="Sign in"
+            title="Sign in with an access token"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <LogIn className="size-4" />
+          </button>
+        )}
+        {token && (
           <button
             type="button"
             onClick={clearAccessToken}
@@ -93,15 +104,6 @@ export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
             className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <LogOut className="size-4" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onSignIn}
-            aria-label="Sign in"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <LogIn className="size-4" />
           </button>
         )}
       </div>
