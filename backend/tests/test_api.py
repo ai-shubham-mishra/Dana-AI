@@ -23,6 +23,7 @@ def make_settings(**overrides) -> Settings:
         jwt_issuer="omnidoc",
         jwt_audience=None,
         jwt_leeway_seconds=0,
+        database_url_test=None,
     )
     base.update(overrides)
     return Settings(**base)

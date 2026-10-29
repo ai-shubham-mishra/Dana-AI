@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiGet, ApiError } from "./api";
 import { useAccessToken } from "./auth";
-import type { ChatMessage, ChatSummary, JobDetail, JobSummary, Me, PendingApproval } from "./types";
+import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, JobDetail, JobSummary, Me, PendingApproval } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -24,6 +24,20 @@ const hasActiveJob = (jobs: JobSummary[]) => jobs.some((job) => job.status === "
 export const useMe = () => useApiQuery<Me>("me", "/api/v1/me");
 export const useChats = () => useApiQuery<ChatSummary[]>("chats", "/api/v1/chats");
 export const useJobs = () => useApiQuery<JobSummary[]>("jobs", "/api/v1/jobs", hasActiveJob);
+export const useConnectors = () => useApiQuery<ConnectorSummary[]>("connectors", "/api/v1/connectors");
+
+export function useConnectorRows(name: string | null, page: number, pageSize: number) {
+  const token = useAccessToken();
+  return useQuery<ConnectorPage, ApiError>({
+    queryKey: ["connector-rows", token, name, page, pageSize],
+    queryFn: () =>
+      apiGet<ConnectorPage>(`/api/v1/connectors/${encodeURIComponent(name ?? "")}/rows?page=${page}&page_size=${pageSize}`, token),
+    enabled: Boolean(token && name),
+    placeholderData: (previous) => previous,
+    refetchOnWindowFocus: false,
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
 
 export function useJob(jobId: string | null) {
   const token = useAccessToken();

@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import {
   ChevronDown,
   ChevronRight,
+  Database,
   LayoutDashboard,
   LogIn,
   LogOut,
@@ -166,6 +167,7 @@ export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
       </div>
 
       <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
+        <NavLink href="/connectors" label="Connectors" icon={Database} active={pathname.startsWith("/connectors")} collapsed={collapsed} />
         <NavLink href="/jobs" label="Jobs" icon={LayoutDashboard} active={pathname.startsWith("/jobs")} collapsed={collapsed} />
 
         <div className="flex flex-col gap-1">

@@ -6,11 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from agent.runtime import build_default_agent
-from api.routes import chats, health, jobs, me
+from api.routes import chats, connectors, health, jobs, me
 from config.settings import Settings, get_settings
 from integrations.auth.jwt_secret import load_jwt_secret
 from integrations.checkpoint.mongo import create_mongo_checkpointer
 from integrations.mongo.client import create_mongo_client, ensure_indexes
+from integrations.postgres.client import create_readonly_pool
 from integrations.storage.blob import create_blob_service, ensure_container
 from integrations.training.service import CommandFactory, TrainingService
 
@@ -55,6 +56,10 @@ def create_app(
         app.state.agent = None
         app.state.agent_lock = asyncio.Lock()
         app.state.active_chats = set()
+        app.state.connector_pool = None
+        if settings.database_url_test:
+            app.state.connector_pool = create_readonly_pool(settings.database_url_test.get_secret_value())
+            await app.state.connector_pool.open(wait=False)
         app.state.training = TrainingService(
             db=db, blob=blob, settings=settings, command_factory=training_command_factory
         )
@@ -62,6 +67,8 @@ def create_app(
             yield
         finally:
             await app.state.training.close()
+            if app.state.connector_pool is not None:
+                await app.state.connector_pool.close()
             await blob.close()
             app.state.checkpoint_client.close()
             mongo.close()
@@ -78,6 +85,7 @@ def create_app(
     app.include_router(me.router)
     app.include_router(chats.router)
     app.include_router(jobs.router)
+    app.include_router(connectors.router)
     return app
 
 

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
             return None
         return value
 
+    # Read-only connector database. Holds one table per connector in datasets_schema.
+    # Treated as the org database for now; per-org routing comes later.
+    database_url_test: SecretStr | None = None
+    datasets_schema: str = "datasets"
+
     blob_connection_string: str = "UseDevelopmentStorage=true"
     blob_container: str = "dana-ai-files"
 
