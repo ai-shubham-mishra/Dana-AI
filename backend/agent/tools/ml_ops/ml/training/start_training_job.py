@@ -11,7 +11,7 @@ class StartTrainingJobInput(ToolInput):
     model: str = Field(description="Model family to train. Only 'mmm' is available today.")
     kpi: str = Field(description="Target KPI or metric the model predicts. Must match the dataset target.")
     channels: list[str] = Field(description="Marketing channels to include, from the dataset channel list.")
-    date_range: str = Field(description="Training window in the form 'YYYY-MM-DD to YYYY-MM-DD'.")
+    date_range: str = Field(description="Training window in the form 'YYYY-MM-DD to YYYY-MM-DD', as returned by resolve_date_range.")
 
 
 class StartTrainingJobTool(BaseTool):
