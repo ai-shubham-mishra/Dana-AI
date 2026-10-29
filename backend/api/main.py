@@ -12,6 +12,7 @@ from integrations.auth.jwt_secret import load_jwt_secret
 from integrations.checkpoint.mongo import create_mongo_checkpointer
 from integrations.mongo.client import create_mongo_client, ensure_indexes
 from integrations.storage.blob import create_blob_service, ensure_container
+from integrations.training.service import CommandFactory, TrainingService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ def create_app(
     settings: Settings | None = None,
     agent_factory=None,
     jwt_secret_loader: Callable[[Settings], str] | None = None,
+    training_command_factory: CommandFactory | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     agent_factory = agent_factory or build_default_agent
@@ -53,9 +55,13 @@ def create_app(
         app.state.agent = None
         app.state.agent_lock = asyncio.Lock()
         app.state.active_chats = set()
+        app.state.training = TrainingService(
+            db=db, blob=blob, settings=settings, command_factory=training_command_factory
+        )
         try:
             yield
         finally:
+            await app.state.training.close()
             await blob.close()
             app.state.checkpoint_client.close()
             mongo.close()

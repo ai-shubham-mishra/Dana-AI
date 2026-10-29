@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiGet, ApiError } from "./api";
 import { useAccessToken } from "./auth";
-import type { ChatMessage, ChatSummary, JobSummary, Me, PendingApproval } from "./types";
+import type { ChatMessage, ChatSummary, JobDetail, JobSummary, Me, PendingApproval } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -24,6 +24,20 @@ const hasActiveJob = (jobs: JobSummary[]) => jobs.some((job) => job.status === "
 export const useMe = () => useApiQuery<Me>("me", "/api/v1/me");
 export const useChats = () => useApiQuery<ChatSummary[]>("chats", "/api/v1/chats");
 export const useJobs = () => useApiQuery<JobSummary[]>("jobs", "/api/v1/jobs", hasActiveJob);
+
+export function useJob(jobId: string | null) {
+  const token = useAccessToken();
+  return useQuery<JobDetail, ApiError>({
+    queryKey: ["job", token, jobId],
+    queryFn: () => apiGet<JobDetail>(`/api/v1/jobs/${jobId}`, token),
+    enabled: Boolean(token && jobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "queued" || status === "running" ? POLL_INTERVAL_MS : false;
+    },
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
 
 export function usePending(chatId: string | null) {
   const token = useAccessToken();
