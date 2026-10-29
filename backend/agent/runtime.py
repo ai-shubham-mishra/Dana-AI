@@ -8,7 +8,7 @@ from config.settings import Settings
 from integrations.keyvault.client import build_keyvault_reader
 from integrations.llm.foundry import build_claude_model
 from integrations.training.scope import JobScope, bind_scope
-from agent.components.todos import TODO_TOOL, todos_from_args
+from agent.middleware import TODO_TOOL, todos_from_args
 from agent.factory import build_dana_agent
 
 logger = logging.getLogger(__name__)

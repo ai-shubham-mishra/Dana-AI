@@ -18,7 +18,7 @@ Frontend styling follows the analytics-studio branding.
 
 - `backend/`: FastAPI service
   - `api/`: routes (`/api/v1/me`, `/chats`, `/jobs`, chat approvals) and the app factory
-  - `agent/`: deepagents orchestrator. Folders: `config/` (`AGENTS.md` memory and `parent_skill.md` playbook), `skills/` (one folder per skill with `SKILL.md`), `tools/` (per-domain tools, e.g. `training/`), `components/` (todos, hitl policy and `ask_user`, and other per-domain components), `middleware/` (custom deepagents middleware)
+  - `agent/`: deepagents orchestrator. Folders: `config/` (`AGENTS.md` memory and `parent_skill.md` playbook), `skills/` (mirrors `tools/`: one folder per domain or tool, each with `SKILL.md`; folders use hyphens because skill names must be lowercase with hyphens), `tools/` (one module per tool, grouped as `system_ops/` (connectors, hitl) and `ml_ops/` (chores, ml/training, ml/data_prep); `tools/registry.py` lists every tool and the HITL policy), `middleware/` (custom deepagents middleware, including the todo helpers)
   - `integrations/`: `auth/` (JWT verification and the Key Vault JWT secret loader), `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs, job events), `checkpoint/` (Mongo-backed LangGraph checkpointer), `training/` (MMM training service, subprocess trainer, progress protocol, request validation), `storage/` (Azurite blob storage)
   - `resources/training/mmm/`: bundled sample MMM dataset (`mmm_demo.csv`) and its config (`mmm_demo.yaml`)
   - `config/`: settings loaded from `backend/.env`
@@ -100,7 +100,7 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - The agent pauses before a gated action and emits an `interrupt` SSE event instead of `done`. The payload lists each action with its `allowed_decisions`.
 - `GET /api/v1/chats/{id}/pending` returns the pending approval, or `null`.
 - `POST /api/v1/chats/{id}/resume` with `{"decisions": [...]}` continues the run. Decision types: `approve`, `edit` (with `edited_action: {name, args}`), `reject` (optional `message`), and `respond` (the user's answer for `ask_user`).
-- `ask_user` accepts only `respond`. `start_training_job` accepts `approve`, `edit`, or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
+- `ask_user` accepts only `respond`. `initiate_ml_training` accepts `approve`, `edit`, or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
 - Run state is stored in the `agent_checkpoints` and `agent_checkpoint_writes` collections in Mongo, so a pending approval survives a backend restart.
 
 ## Thinking and run progress

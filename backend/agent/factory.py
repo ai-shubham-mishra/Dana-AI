@@ -5,9 +5,8 @@ from deepagents.backends import FilesystemBackend
 from deepagents.middleware.filesystem import FilesystemPermission
 from langgraph.checkpoint.memory import MemorySaver
 
-from agent.components.hitl import INTERRUPT_ON, ask_user
 from agent.middleware import build_middleware
-from agent.tools.training.start_job import start_training_job
+from agent.tools.registry import INTERRUPT_ON, TOOLS
 
 BASE_PROMPT = (
     "You are Dana AI, an agent for marketing analytics and predictive modelling. "
@@ -20,16 +19,24 @@ def load_system_prompt(agent_root: Path) -> str:
     return f"{BASE_PROMPT}\n\n{parent_skill}"
 
 
+def skill_sources(agent_root: Path) -> list[str]:
+    """One skill source per folder that directly holds skill folders, so the nested skills tree is discovered."""
+    sources = {"/skills/"}
+    for skill_file in (agent_root / "skills").rglob("SKILL.md"):
+        sources.add("/" + skill_file.parent.parent.relative_to(agent_root).as_posix() + "/")
+    return sorted(sources)
+
+
 def build_dana_agent(model, agent_root: Path, checkpointer=None):
     return create_deep_agent(
         model=model,
         system_prompt=load_system_prompt(agent_root),
         middleware=build_middleware(),
-        tools=[ask_user, start_training_job],
+        tools=TOOLS,
         interrupt_on=INTERRUPT_ON,
         backend=FilesystemBackend(root_dir=agent_root, virtual_mode=True),
         memory=["/config/AGENTS.md"],
-        skills=["/skills/"],
+        skills=skill_sources(agent_root),
         permissions=[FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
         checkpointer=checkpointer or MemorySaver(),
         name="dana-ai",
