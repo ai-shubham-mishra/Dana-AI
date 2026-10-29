@@ -118,6 +118,14 @@ def test_empty_message_is_rejected(chat_client, member):
     assert res.status_code == 422
 
 
+def test_split_reply_moves_text_before_boundary_into_thinking():
+    from api.routes.chats import split_reply
+
+    assert split_reply("\n Let me check.\n\n", 0) == ("", "Let me check.\n\n")
+    assert split_reply("Checking files. Done.", 15) == ("Checking files.", "Done.")
+    assert split_reply("Only process", 12) == ("Only process", "")
+
+
 def test_key_vault_failure_returns_503_without_leaking_details(raw_db, member):
     with TestClient(create_app(make_settings(), agent_factory=failing_factory, jwt_secret_loader=static_secret)) as c:
         headers = auth(mint())

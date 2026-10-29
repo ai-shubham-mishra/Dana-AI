@@ -1,19 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench } from "lucide-react";
 
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
+import { ReasoningTicker, ThinkingBlock, ToolStatusIcon, splitReply } from "@/components/thinking";
+import { apiGet } from "@/lib/api";
 import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
 import { useChatSelection } from "@/lib/chat-selection";
 import { useChats, useMessages, usePending } from "@/lib/queries";
-import type { Decision, TodoItem } from "@/lib/types";
+import type { ChatMessage, Decision, TodoItem } from "@/lib/types";
 
 type ToolChip = { id: string; name: string; done: boolean };
-type RunState = { chatId: string; userContent: string | null; text: string; tools: ToolChip[]; todos: TodoItem[] };
+// boundary: text length at the last tool event; text before it is process, after it is the answer.
+type RunState = {
+  id: string;
+  userContent: string | null;
+  text: string;
+  boundary: number;
+  tools: ToolChip[];
+  todos: TodoItem[];
+  // Saved message count when the run started. Saved messages from this index on are shown by runs.
+  baseCount: number;
+  done: boolean;
+};
 
 const HIDDEN_TOOLS = new Set(["write_todos"]);
 
@@ -35,15 +48,15 @@ const CAPABILITIES = [
   },
 ];
 
-function Avatar() {
-  return (
-    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-magenta-wash text-primary">
-      <Sparkles className="size-3.5" />
-    </div>
-  );
-}
-
-function MessageBubble({ role, content }: { role: "user" | "assistant"; content: string }) {
+function MessageBubble({
+  role,
+  content,
+  thinking,
+}: {
+  role: "user" | "assistant";
+  content: string;
+  thinking?: string | null;
+}) {
   if (role === "user") {
     return (
       <div className="ml-auto max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-cta px-4 py-2.5 text-sm text-cta-foreground">
@@ -52,9 +65,13 @@ function MessageBubble({ role, content }: { role: "user" | "assistant"; content:
     );
   }
   return (
-    <div className="flex gap-3">
-      <Avatar />
-      <Markdown className="flex-1 pt-0.5">{content}</Markdown>
+    <div className="min-w-0 space-y-3">
+      {thinking && (
+        <ThinkingBlock live={false} hasContent>
+          <Markdown className="text-xs text-muted-foreground">{thinking}</Markdown>
+        </ThinkingBlock>
+      )}
+      {content && <Markdown>{content}</Markdown>}
     </div>
   );
 }
@@ -85,40 +102,39 @@ function TodoPanel({ todos }: { todos: TodoItem[] }) {
   );
 }
 
-function LiveAssistant({ run }: { run: RunState }) {
+function AssistantTurn({ run }: { run: RunState }) {
   const tools = run.tools.filter((tool) => !HIDDEN_TOOLS.has(tool.name));
+  const { process, answer } = splitReply(run.text, run.boundary);
+  const running = tools.find((tool) => !tool.done);
+  const status = answer
+    ? "Writing response…"
+    : running
+      ? `Running ${running.name.replace(/_/g, " ")}…`
+      : process
+        ? "Reasoning…"
+        : "Thinking…";
+  const hasProcess = tools.length > 0 || run.todos.length > 0 || process.length > 0;
   return (
-    <div className="flex gap-3">
-      <Avatar />
-      <div className="min-w-0 flex-1 space-y-3 pt-0.5">
-        {tools.length > 0 && (
-          <ul className="flex flex-wrap gap-2">
-            {tools.map((tool) => (
-              <li
-                key={tool.id}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs"
-              >
-                <Wrench className="size-3 text-primary" />
-                <span>{tool.name.replace(/_/g, " ")}</span>
-                {tool.done ? (
-                  <CircleCheck className="size-3 text-primary" />
-                ) : (
-                  <Loader2 className="size-3 animate-spin text-muted-foreground" />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {run.todos.length > 0 && <TodoPanel todos={run.todos} />}
-        {run.text ? (
-          <Markdown>{run.text}</Markdown>
-        ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            Thinking…
-          </p>
-        )}
-      </div>
+    <div className="min-w-0 space-y-3">
+      <ThinkingBlock live={!run.done} status={status} hasContent={hasProcess} defaultOpen>
+          {tools.length > 0 && (
+            <ul className="flex flex-wrap gap-2">
+              {tools.map((tool) => (
+                <li
+                  key={tool.id}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs"
+                >
+                  <Wrench className="size-3 text-primary" />
+                  <span>{tool.name.replace(/_/g, " ")}</span>
+                  <ToolStatusIcon done={tool.done} />
+                </li>
+              ))}
+            </ul>
+          )}
+          {run.todos.length > 0 && <TodoPanel todos={run.todos} />}
+          {process && <ReasoningTicker text={process} />}
+        </ThinkingBlock>
+        {answer && <Markdown animateWords>{answer}</Markdown>}
     </div>
   );
 }
@@ -187,14 +203,14 @@ function Composer({
 
 function ChatThread({
   chatId,
-  run,
+  runs,
   error,
   disabled,
   onSend,
   onResume,
 }: {
   chatId: string;
-  run: RunState | null;
+  runs: RunState[];
   error: string | null;
   disabled: boolean;
   onSend: (content: string) => Promise<boolean>;
@@ -202,17 +218,20 @@ function ChatThread({
 }) {
   const messages = useMessages(chatId);
   const pending = usePending(chatId);
-  const liveRun = run?.chatId === chatId ? run : null;
-  const pendingApproval = liveRun ? null : (pending.data ?? null);
+  const live = runs.some((run) => !run.done);
+  const pendingApproval = live ? null : (pending.data ?? null);
   const pendingId = pendingApproval?.interrupt_id ?? null;
   const bottomRef = useRef<HTMLDivElement>(null);
-  const messageCount = messages.data?.length ?? 0;
-  const liveText = liveRun?.text ?? "";
-  const liveSteps = (liveRun?.tools.length ?? 0) + (liveRun?.todos.length ?? 0);
+  const firstBase = runs[0]?.baseCount;
+  const history = firstBase === undefined ? messages.data : messages.data?.slice(0, firstBase);
+  const latest = runs[runs.length - 1];
+  const historyCount = history?.length ?? 0;
+  const latestText = latest?.text ?? "";
+  const latestSteps = (latest?.tools.length ?? 0) + (latest?.todos.length ?? 0);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [messageCount, liveText, liveSteps, pendingId]);
+  }, [historyCount, runs.length, latestText, latestSteps, pendingId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -220,20 +239,20 @@ function ChatThread({
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
           {messages.isPending && <p className="text-sm text-muted-foreground">Loading conversation…</p>}
           {messages.error && <p className="text-sm text-destructive">{messages.error.message}</p>}
-          {messages.data?.map((message) => (
-            <MessageBubble key={message.id} role={message.role} content={message.content} />
+          {history?.map((message) => (
+            <MessageBubble key={message.id} role={message.role} content={message.content} thinking={message.thinking} />
           ))}
-          {messages.data?.length === 0 && !liveRun && (
+          {history?.length === 0 && runs.length === 0 && (
             <p className="text-center text-sm text-muted-foreground">
               Describe the outcome you want to model. Dana will ask about your data before training.
             </p>
           )}
-          {liveRun && (
-            <>
-              {liveRun.userContent !== null && <MessageBubble role="user" content={liveRun.userContent} />}
-              <LiveAssistant run={liveRun} />
-            </>
-          )}
+          {runs.map((run) => (
+            <Fragment key={run.id}>
+              {run.userContent !== null && <MessageBubble role="user" content={run.userContent} />}
+              <AssistantTurn run={run} />
+            </Fragment>
+          ))}
           {pendingApproval && (
             <ApprovalPanel
               key={pendingApproval.interrupt_id}
@@ -268,7 +287,7 @@ export function ChatWindow() {
   const selectChat = useChatSelection((state) => state.select);
   const busy = useChatSelection((state) => state.busy);
   const setBusy = useChatSelection((state) => state.setBusy);
-  const [run, setRun] = useState<RunState | null>(null);
+  const [runs, setRuns] = useState<Record<string, RunState[]>>({});
   const [error, setError] = useState<{ chatId: string | null; message: string } | null>(null);
   const inFlight = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -291,34 +310,58 @@ export function ChatWindow() {
     setError(null);
     const controller = new AbortController();
     abortRef.current = controller;
+    const runId = crypto.randomUUID();
     let target = chatId;
+    let runChatId: string | null = null;
     let streamed = false;
+    const patch = (chat: string, update: (run: RunState) => RunState) =>
+      setRuns((prev) => ({
+        ...prev,
+        [chat]: (prev[chat] ?? []).map((run) => (run.id === runId ? update(run) : run)),
+      }));
     try {
       if (!target) {
         target = (await createChat(token)).id;
         selectChat(target);
       }
-      const runChatId = target;
-      setRun({ chatId: runChatId, userContent, text: "", tools: [], todos: [] });
-      await start(runChatId, controller.signal, {
+      const chat = target;
+      runChatId = chat;
+      const saved = await queryClient.ensureQueryData({
+        queryKey: ["messages", token, chat],
+        queryFn: () => apiGet<ChatMessage[]>(`/api/v1/chats/${chat}/messages`, token),
+      });
+      const run: RunState = {
+        id: runId,
+        userContent,
+        text: "",
+        boundary: 0,
+        tools: [],
+        todos: [],
+        baseCount: saved.length,
+        done: false,
+      };
+      setRuns((prev) => ({ ...prev, [chat]: [...(prev[chat] ?? []), run] }));
+      await start(chat, controller.signal, {
         onToken: (text) => {
           streamed = true;
-          setRun((current) => (current ? { ...current, text: current.text + text } : current));
+          patch(chat, (current) => ({ ...current, text: current.text + text }));
         },
-        onTodos: (todos) => setRun((current) => (current ? { ...current, todos } : current)),
+        onTodos: (todos) => patch(chat, (current) => ({ ...current, todos })),
         onToolCall: ({ id, name }) => {
           streamed = true;
-          setRun((current) =>
-            current ? { ...current, tools: [...current.tools, { id, name, done: false }] } : current,
-          );
+          patch(chat, (current) => ({
+            ...current,
+            boundary: current.text.length,
+            tools: [...current.tools, { id, name, done: false }],
+          }));
         },
         onToolResult: ({ id }) =>
-          setRun((current) =>
-            current
-              ? { ...current, tools: current.tools.map((tool) => (tool.id === id ? { ...tool, done: true } : tool)) }
-              : current,
-          ),
-        onInterrupt: (pending) => queryClient.setQueryData(["pending", token, runChatId], pending),
+          patch(chat, (current) => ({
+            ...current,
+            boundary: current.text.length,
+            tools: current.tools.map((tool) => (tool.id === id ? { ...tool, done: true } : tool)),
+          })),
+        onInterrupt: (pending) => queryClient.setQueryData(["pending", token, chat], pending),
       });
       return true;
     } catch (err) {
@@ -326,12 +369,16 @@ export function ChatWindow() {
       setError({ chatId: target, message: err instanceof Error ? err.message : "Something went wrong" });
       return streamed;
     } finally {
-      if (target) {
-        await queryClient.invalidateQueries({ queryKey: ["messages", token, target] });
-        await queryClient.invalidateQueries({ queryKey: ["pending", token, target] });
+      if (runChatId) {
+        const finished = runChatId;
+        await queryClient.invalidateQueries({ queryKey: ["messages", token, finished] });
+        await queryClient.invalidateQueries({ queryKey: ["pending", token, finished] });
+        await queryClient.invalidateQueries({ queryKey: ["chats", token] });
+        setRuns((prev) => ({
+          ...prev,
+          [finished]: (prev[finished] ?? []).map((run) => (run.id === runId ? { ...run, done: true } : run)),
+        }));
       }
-      await queryClient.invalidateQueries({ queryKey: ["chats", token] });
-      setRun(null);
       abortRef.current = null;
       inFlight.current = false;
       setBusy(false);
@@ -365,7 +412,7 @@ export function ChatWindow() {
         <ChatThread
           key={activeChatId}
           chatId={activeChatId}
-          run={run}
+          runs={activeChatId ? (runs[activeChatId] ?? []) : []}
           error={visibleError}
           disabled={composerDisabled}
           onSend={sendMessage}
