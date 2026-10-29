@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
+from agent.request_context import parse_client_timezone
 from agent.runtime import pending_approval, stream_turn
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.keyvault.client import KeyVaultError
@@ -107,6 +108,10 @@ async def _get_agent(request: Request) -> Any:
     return state.agent
 
 
+def _client_timezone(request: Request) -> str | None:
+    return parse_client_timezone(request.headers.get("x-client-timezone"))
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
@@ -195,7 +200,7 @@ async def send_message(
         active.discard(chat_id)
         raise
 
-    return _stream_response(request, scope, agent, content=body.content)
+    return _stream_response(request, scope, agent, content=body.content, timezone=_client_timezone(request))
 
 
 @router.get("/chats/{chat_id}/pending", response_model=PendingApproval | None)
@@ -233,7 +238,7 @@ async def resume_chat(
 
     scope = {"org_id": principal.org_id, "user_id": principal.user_id, "chat_id": chat_id}
     decisions = [d.model_dump(exclude_none=True) for d in body.decisions]
-    return _stream_response(request, scope, agent, decisions=decisions)
+    return _stream_response(request, scope, agent, decisions=decisions, timezone=_client_timezone(request))
 
 
 def _check_decisions(pending: dict, decisions: list[DecisionIn]) -> None:

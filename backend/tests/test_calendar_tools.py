@@ -3,9 +3,11 @@ from datetime import date
 
 import pytest
 
+from agent.request_context import bind_client_timezone, parse_client_timezone
 from agent.tools.registry import TOOLS
 from agent.tools.system_ops.calendar.resolve_date_range import resolve_range
 from agent.tools.system_ops.utilities.calculate import calculate
+from api.routes.chats import _client_timezone
 
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
 TODAY = date(2026, 9, 28)
@@ -117,3 +119,36 @@ def test_calculate_rejects_unsafe_or_invalid_input(expression):
 
 def test_calculate_tool_reports_result():
     assert run("calculate", expression="pi * 2") == "pi * 2 = 6.283185307"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Asia/Kolkata", "Asia/Kolkata"),
+        (" UTC ", "UTC"),
+        ("Mars/Olympus", None),
+        ("/etc/localtime", None),
+        ("", None),
+        (None, None),
+        ("A" * 65, None),
+    ],
+)
+def test_parse_client_timezone(value, expected):
+    assert parse_client_timezone(value) == expected
+
+
+def test_client_timezone_is_read_from_header():
+    class Req:
+        headers = {"x-client-timezone": "Asia/Kolkata"}
+
+    assert _client_timezone(Req()) == "Asia/Kolkata"
+
+
+def test_date_tools_use_client_timezone_then_fall_back_to_utc():
+    bind_client_timezone("Asia/Kolkata")
+    try:
+        assert "+05:30" in run("get_current_date")
+        assert "+00:00" in run("get_current_date", timezone="UTC")
+    finally:
+        bind_client_timezone(None)
+    assert "UTC" in run("get_current_date")
