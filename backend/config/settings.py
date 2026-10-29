@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     jwt_issuer: str = "omnidoc"
     jwt_audience: str | None = None
     jwt_leeway_seconds: int = 0
+
+    @field_validator("jwt_audience", mode="before")
+    @classmethod
+    def _blank_audience_is_unset(cls, value):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     blob_connection_string: str = "UseDevelopmentStorage=true"
     blob_container: str = "dana-ai-files"
