@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, Pencil, Reply, ShieldAlert, X, type LucideIcon } from "lucide-react";
 
+import { Markdown } from "@/components/markdown";
 import type { Decision, DecisionType, PendingAction, PendingApproval } from "@/lib/types";
 
 type Draft = { choice: DecisionType | null; message: string; argsText: string };
@@ -74,9 +75,11 @@ function ApprovalCard({
 
   return (
     <div className="rounded-xl border border-border bg-background p-3">
-      <p className="text-sm font-medium">
-        {action.name === "ask_user" ? String(action.args.question ?? action.description) : action.description}
-      </p>
+      {action.name === "ask_user" ? (
+        <Markdown className="font-medium">{String(action.args.question ?? action.description)}</Markdown>
+      ) : (
+        <p className="text-sm font-medium">{action.description}</p>
+      )}
       {details.length > 0 && (
         <dl className="mt-2 space-y-1 text-xs">
           {details.map(([key, value]) => (
