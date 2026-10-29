@@ -1,0 +1,52 @@
+import logging
+from collections.abc import AsyncIterator
+from typing import Any
+
+from config.settings import Settings
+from integrations.keyvault.client import build_keyvault_reader
+from integrations.llm.foundry import build_claude_model
+
+from agent.factory import build_dana_agent
+
+logger = logging.getLogger(__name__)
+
+TODO_TOOL = "write_todos"
+
+
+def build_default_agent(settings: Settings, checkpointer: Any):
+    reader = build_keyvault_reader(settings)
+    try:
+        model = build_claude_model(reader, settings.llm_model)
+    finally:
+        reader.close()
+    return build_dana_agent(model, settings.agent_root, checkpointer=checkpointer)
+
+
+def _text_of(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.get("text", "")
+        for block in content or []
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
+async def stream_turn(agent: Any, chat_id: str, content: str) -> AsyncIterator[tuple[str, dict]]:
+    config = {"configurable": {"thread_id": chat_id}}
+    payload = {"messages": [{"role": "user", "content": content}]}
+    async for event in agent.astream_events(payload, config=config, version="v2"):
+        kind = event["event"]
+        data = event.get("data") or {}
+        if kind == "on_chat_model_stream":
+            text = _text_of(data["chunk"].content)
+            if text:
+                yield "token", {"text": text}
+        elif kind == "on_tool_start":
+            name = event.get("name", "")
+            args = data.get("input") or {}
+            if name == TODO_TOOL:
+                yield "todos", {"todos": args.get("todos", [])}
+            yield "tool_call", {"id": str(event["run_id"]), "name": name, "args": args}
+        elif kind == "on_tool_end":
+            yield "tool_result", {"id": str(event["run_id"]), "name": event.get("name", "")}
