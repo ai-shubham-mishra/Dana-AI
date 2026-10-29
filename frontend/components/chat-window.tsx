@@ -6,7 +6,7 @@ import { BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench 
 
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
-import { ReasoningTicker, StreamingText, ThinkingBlock, ToolStatusIcon, splitReply } from "@/components/thinking";
+import { ReasoningTicker, ThinkingBlock, ToolStatusIcon, splitReply } from "@/components/thinking";
 import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
 import { useChatSelection } from "@/lib/chat-selection";
@@ -143,11 +143,7 @@ function LiveAssistant({ run }: { run: RunState }) {
           {run.todos.length > 0 && <TodoPanel todos={run.todos} />}
           {process && <ReasoningTicker text={process} />}
         </ThinkingBlock>
-        {answer && (
-          <p className="text-sm leading-relaxed">
-            <StreamingText text={answer} />
-          </p>
-        )}
+        {answer && <Markdown animateWords>{answer}</Markdown>}
       </div>
     </div>
   );

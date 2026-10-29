@@ -1,34 +1,22 @@
 "use client";
 
-import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Brain, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+
+import { Markdown } from "@/components/markdown";
 
 // Mirrors backend split_reply: text before the last tool event is process, the rest is the answer.
 export function splitReply(text: string, boundary: number) {
   return { process: text.slice(0, boundary).trimEnd(), answer: text.slice(boundary).trimStart() };
 }
 
-export function StreamingText({ text }: { text: string }) {
-  return (
-    <span className="whitespace-pre-wrap">
-      {text.split(/(\s+)/).map((part, index) => {
-        if (!part) return null;
-        if (/^\s+$/.test(part)) return <Fragment key={index}>{part}</Fragment>;
-        return (
-          <span key={index} className="dana-word">
-            {part}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
 export function ReasoningTicker({ text }: { text: string }) {
   return (
     <div className="flex h-[3rem] flex-col justify-end overflow-hidden text-xs leading-6 text-muted-foreground">
-      <StreamingText text={text} />
+      <Markdown animateWords className="text-xs leading-6">
+        {text}
+      </Markdown>
     </div>
   );
 }
@@ -50,13 +38,13 @@ export function MatrixDotLoader() {
 
   const rule = DOT_PATTERNS[pattern];
   return (
-    <div className="grid h-[22px] w-[22px] shrink-0 grid-cols-4 gap-0.5" aria-hidden="true">
+    <div className="grid h-[11px] w-[11px] shrink-0 grid-cols-4 gap-px" aria-hidden="true">
       {Array.from({ length: 16 }, (_, index) => {
         const delay = (rule(Math.floor(index / 4), index % 4) % 4) * 0.12;
         return (
           <span
             key={`${pattern}-${index}`}
-            className="dana-dot size-1 rounded-full bg-primary"
+            className="dana-dot size-0.5 rounded-full bg-primary"
             style={{ "--dot-delay": `${delay}s` } as CSSProperties}
           />
         );
@@ -147,14 +135,14 @@ export function ThinkingBlock({
   const open = userOpen ?? (live && !answerStarted);
 
   return (
-    <div className="rounded-xl border border-border bg-card/60 text-sm">
+    <div className="rounded-xl border border-border text-sm">
       <button
         type="button"
         onClick={() => setUserOpen(!open)}
         aria-expanded={open}
         className="flex w-full items-center gap-2.5 px-3 py-2 text-left"
       >
-        {live ? <MatrixDotLoader /> : <Brain className="size-3.5 shrink-0 text-primary" />}
+        {live && <MatrixDotLoader />}
         {live ? (
           <StatusLine label={status ?? "Thinking…"} />
         ) : (

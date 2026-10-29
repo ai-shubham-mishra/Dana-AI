@@ -55,10 +55,54 @@ const components: Components = {
   td: (props) => <td className="border-b border-border px-3 py-2 align-top" {...props} />,
 };
 
-export function Markdown({ children, className }: { children: string; className?: string }) {
+type WordNode = {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: WordNode[];
+};
+
+function splitWords(value: string): WordNode[] {
+  return value
+    .split(/(\s+)/)
+    .filter(Boolean)
+    .map((part) =>
+      /^\s+$/.test(part)
+        ? { type: "text", value: part }
+        : { type: "element", tagName: "span", properties: { className: ["dana-word"] }, children: [{ type: "text", value: part }] },
+    );
+}
+
+function wrapWords(node: WordNode) {
+  if (!node.children) return;
+  if (node.type === "element" && (node.tagName === "code" || node.tagName === "pre")) return;
+  node.children = node.children.flatMap((child) => {
+    if (child.type === "text" && child.value) return splitWords(child.value);
+    wrapWords(child);
+    return [child];
+  });
+}
+
+// Wraps each word so streamed Markdown can animate in without losing formatting.
+const rehypeWordSpans = () => (tree: WordNode) => wrapWords(tree);
+
+export function Markdown({
+  children,
+  className,
+  animateWords = false,
+}: {
+  children: string;
+  className?: string;
+  animateWords?: boolean;
+}) {
   return (
     <div className={cn("min-w-0 break-words text-sm leading-6", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={animateWords ? [rehypeWordSpans] : []}
+        components={components}
+      >
         {children}
       </ReactMarkdown>
     </div>
