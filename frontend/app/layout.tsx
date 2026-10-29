@@ -4,7 +4,6 @@ import "./globals.css";
 
 import type { ReactNode } from "react";
 
-import { AppShell } from "@/components/app-shell";
 import { Providers } from "@/components/providers";
 
 const geistSans = Geist({
@@ -36,7 +35,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="min-h-full flex flex-col">
         <Providers>
-          <AppShell>{children}</AppShell>
+          {children}
         </Providers>
       </body>
     </html>

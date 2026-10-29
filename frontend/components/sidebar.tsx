@@ -1,101 +1,25 @@
 "use client";
 
-import * as Tabs from "@radix-ui/react-tabs";
 import { motion } from "framer-motion";
-import { Briefcase, LogIn, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
+import { LayoutDashboard, LogIn, LogOut, MessageSquare, PanelLeftClose, PanelLeftOpen, type LucideIcon } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/wordmark";
 import { clearAccessToken, useAccessToken } from "@/lib/auth";
-import { relativeTime } from "@/lib/format";
-import { useChats, useJobs, useMe } from "@/lib/queries";
-import type { JobStatus } from "@/lib/types";
+import { useMe } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
-const STATUS_STYLES: Record<string, string> = {
-  queued: "bg-muted text-muted-foreground",
-  running: "bg-accent text-primary",
-  succeeded: "bg-success/15 text-success",
-  failed: "bg-destructive/15 text-destructive",
-  cancelled: "bg-muted text-muted-foreground",
-};
-
-function StatusBadge({ status }: { status: JobStatus }) {
-  return (
-    <span
-      className={cn(
-        "rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
-        STATUS_STYLES[status] ?? "bg-muted text-muted-foreground",
-      )}
-    >
-      {status}
-    </span>
-  );
-}
-
-function ListState({ loading, error, empty, emptyText }: { loading: boolean; error: Error | null; empty: boolean; emptyText: string }) {
-  if (loading) return <p className="px-3 py-2 text-sm text-muted-foreground">Loading…</p>;
-  if (error) return <p className="px-3 py-2 text-sm text-destructive">{error.message}</p>;
-  if (empty) return <p className="px-3 py-2 text-sm text-muted-foreground">{emptyText}</p>;
-  return null;
-}
-
-function ChatsList() {
-  const token = useAccessToken();
-  const chats = useChats();
-  const items = chats.data ?? [];
-  return (
-    <div className="space-y-1">
-      <ListState
-        loading={Boolean(token) && chats.isPending}
-        error={chats.error}
-        empty={!chats.isPending && !chats.error && items.length === 0}
-        emptyText={token ? "No chats yet" : "Sign in to see your chats"}
-      />
-      {items.map((chat) => (
-        <button
-          key={chat.id}
-          type="button"
-          className="flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
-        >
-          <span className="truncate">{chat.title}</span>
-          <span className="shrink-0 text-[11px] text-muted-foreground">{relativeTime(chat.updated_at)}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function JobsList() {
-  const token = useAccessToken();
-  const jobs = useJobs();
-  const items = jobs.data ?? [];
-  return (
-    <div className="space-y-1">
-      <ListState
-        loading={Boolean(token) && jobs.isPending}
-        error={jobs.error}
-        empty={!jobs.isPending && !jobs.error && items.length === 0}
-        emptyText={token ? "No training jobs yet" : "Sign in to see your jobs"}
-      />
-      {items.map((job) => (
-        <div key={job.id} className="rounded-md px-3 py-2 hover:bg-muted">
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-medium">{job.title}</span>
-            <StatusBadge status={job.status} />
-          </div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {job.kind} · {relativeTime(job.created_at)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
+const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/jobs", label: "Jobs", icon: LayoutDashboard },
+];
 
 export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
+  const pathname = usePathname();
   const token = useAccessToken();
   const me = useMe();
 
@@ -117,54 +41,31 @@ export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
         </button>
       </div>
 
-      <div className="px-3">
-        <button
-          type="button"
-          disabled={!token}
-          aria-label="New chat"
-          className={cn(
-            "flex w-full items-center gap-2 rounded-md bg-cta px-3 py-2 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-50",
-            collapsed && "justify-center px-0",
-          )}
-        >
-          <Plus className="size-4" />
-          {!collapsed && "New chat"}
-        </button>
-      </div>
-
-      {collapsed ? (
-        <div className="mt-4 flex flex-col items-center gap-2 text-muted-foreground">
-          <MessageSquare className="size-4" aria-hidden />
-          <Briefcase className="size-4" aria-hidden />
-        </div>
-      ) : (
-        <Tabs.Root defaultValue="chats" className="mt-4 flex min-h-0 flex-1 flex-col">
-          <Tabs.List className="mx-3 grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
-            <Tabs.Trigger
-              value="chats"
-              className="flex items-center justify-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+      <nav aria-label="Primary" className="flex flex-col gap-1 px-3">
+        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+          const active = pathname === href || pathname.startsWith(`${href}/`);
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-label={label}
+              aria-current={active ? "page" : undefined}
+              title={label}
+              className={cn(
+                "relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+                collapsed && "justify-center px-0",
+                active
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
             >
-              <MessageSquare className="size-4" />
-              Chats
-            </Tabs.Trigger>
-            <Tabs.Trigger
-              value="jobs"
-              className="flex items-center justify-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
-              <Briefcase className="size-4" />
-              Jobs
-            </Tabs.Trigger>
-          </Tabs.List>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-            <Tabs.Content value="chats" className="outline-none">
-              <ChatsList />
-            </Tabs.Content>
-            <Tabs.Content value="jobs" className="outline-none">
-              <JobsList />
-            </Tabs.Content>
-          </div>
-        </Tabs.Root>
-      )}
+              {active && <span aria-hidden className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />}
+              <Icon className="size-4 shrink-0" />
+              {!collapsed && label}
+            </Link>
+          );
+        })}
+      </nav>
 
       <div className="mt-auto flex items-center gap-2 border-t border-sidebar-border p-3">
         {!collapsed && (
