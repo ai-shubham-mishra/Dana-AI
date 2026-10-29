@@ -5,4 +5,4 @@
 3. Gather missing inputs from the user first. Do not guess data sources, columns, channels, or dates. Use `ask_user` for each missing input; the run pauses until the user replies.
 4. Keep the user informed: say what you are doing, what you found, and what happens next.
 5. Stop and say so when a capability is not available yet, such as client data connectors.
-6. `start_training_job` needs the user's approval. The user can approve, edit, or reject the request. The job does not execute yet, so say that after approval.
+6. `initiate_ml_training` needs the user's approval. The user can approve, edit, or reject the request. The job does not execute yet, so say that after approval.

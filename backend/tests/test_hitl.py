@@ -12,7 +12,7 @@ HEADERS = auth(mint())
 OTHER_HEADERS = auth(mint(user=USER_2))
 START_ARGS = {"model": "mmm", "kpi": "sales", "channels": ["meta", "google"], "date_range": "2024-01-01 to 2024-12-31"}
 ASK_CALL = AIMessage(content="", tool_calls=[{"name": "ask_user", "args": {"question": "Which KPI?"}, "id": "call-ask-1"}])
-START_CALL = AIMessage(content="", tool_calls=[{"name": "start_training_job", "args": START_ARGS, "id": "call-start-1"}])
+START_CALL = AIMessage(content="", tool_calls=[{"name": "initiate_ml_training", "args": START_ARGS, "id": "call-start-1"}])
 
 
 def make_app(settings, script):
@@ -91,10 +91,10 @@ def test_approve_runs_the_gated_tool(open_client):
     client = open_client([START_CALL, REPLY])
     chat_id = new_chat(client, HEADERS)
     action = event(send(client, chat_id), "interrupt")["actions"][0]
-    assert action["name"] == "start_training_job"
+    assert action["name"] == "initiate_ml_training"
     assert action["allowed_decisions"] == ["approve", "edit", "reject"]
     events = parse_sse(resume(client, chat_id, [{"type": "approve"}]).text)
-    assert event(events, "tool_result")["name"] == "start_training_job"
+    assert event(events, "tool_result")["name"] == "initiate_ml_training"
     assert "done" in kinds(events)
     assert "kpi=sales" in tool_content(client, chat_id, "call-start-1")
 
@@ -103,7 +103,7 @@ def test_edit_changes_arguments_before_the_tool_runs(open_client):
     client = open_client([START_CALL, REPLY])
     chat_id = new_chat(client, HEADERS)
     send(client, chat_id)
-    edited = {"name": "start_training_job", "args": {**START_ARGS, "kpi": "revenue"}}
+    edited = {"name": "initiate_ml_training", "args": {**START_ARGS, "kpi": "revenue"}}
     res = resume(client, chat_id, [{"type": "edit", "edited_action": edited}])
     assert res.status_code == 200
     content = tool_content(client, chat_id, "call-start-1")
