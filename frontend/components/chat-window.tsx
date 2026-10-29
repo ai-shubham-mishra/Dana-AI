@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BarChart3, Cable, Circle, CircleCheck, Loader2, Plus, Send, Sparkles, Wrench } from "lucide-react";
 
+import { Markdown } from "@/components/markdown";
 import { createChat, streamChatMessage } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
 import { relativeTime } from "@/lib/format";
@@ -98,7 +99,7 @@ function MessageBubble({ role, content }: { role: "user" | "assistant"; content:
   return (
     <div className="flex gap-3">
       <Avatar />
-      <p className="min-w-0 flex-1 whitespace-pre-wrap pt-0.5 text-sm leading-6">{content}</p>
+      <Markdown className="flex-1 pt-0.5">{content}</Markdown>
     </div>
   );
 }
@@ -155,7 +156,7 @@ function LiveAssistant({ run }: { run: RunState }) {
         )}
         {run.todos.length > 0 && <TodoPanel todos={run.todos} />}
         {run.text ? (
-          <p className="whitespace-pre-wrap text-sm leading-6">{run.text}</p>
+          <Markdown>{run.text}</Markdown>
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
