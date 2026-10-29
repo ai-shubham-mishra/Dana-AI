@@ -16,6 +16,7 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinking?: string | null;
   created_at: string;
 };
 

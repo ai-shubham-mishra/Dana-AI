@@ -101,6 +101,11 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - `ask_user` accepts only `respond`. `start_training_job` accepts `approve`, `edit`, or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
 - Run state is stored in the `agent_checkpoints` and `agent_checkpoint_writes` collections in Mongo, so a pending approval survives a backend restart.
 
+## Thinking and run progress
+
+- Text the agent writes before its last tool event is process. It is stored in the message's `thinking` field and shown in a collapsible **Thinking** block. The text after the last tool event is the answer, stored in `content`. A run that pauses for approval stores its text as thinking only.
+- The approval card renders outside the Thinking block.
+
 ## Git workflow
 
 - `main` is the release branch. The owner merges it manually.

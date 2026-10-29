@@ -35,6 +35,7 @@ class MessageOut(BaseModel):
     id: str
     role: Literal["user", "assistant"]
     content: str
+    thinking: str | None = None
     created_at: datetime
 
 
@@ -153,7 +154,7 @@ async def list_messages(
     cursor = (
         request.app.state.db.messages.find(
             {"org_id": principal.org_id, "user_id": principal.user_id, "chat_id": chat_id},
-            {"_id": 0, "id": 1, "role": 1, "content": 1, "created_at": 1},
+            {"_id": 0, "id": 1, "role": 1, "content": 1, "thinking": 1, "created_at": 1},
         )
         .sort("created_at", 1)
         .limit(LIST_LIMIT * 4)
@@ -245,6 +246,11 @@ def _check_decisions(pending: dict, decisions: list[DecisionIn]) -> None:
             raise HTTPException(status_code=422, detail="edited_action.name must match the pending action")
 
 
+def split_reply(text: str, boundary: int) -> tuple[str, str]:
+    """Text before the last tool event is process (thinking); the rest is the answer."""
+    return text[:boundary].rstrip(), text[boundary:].lstrip()
+
+
 def _stream_response(
     request: Request,
     scope: dict[str, str],
@@ -257,18 +263,30 @@ def _stream_response(
 
     async def events() -> AsyncIterator[str]:
         reply: list[str] = []
+        boundary = 0
         paused = False
         try:
             async for event, data in stream_turn(agent, chat_id, **turn):
                 if event == "token":
                     reply.append(data["text"])
+                if event in ("tool_call", "tool_result"):
+                    boundary = len("".join(reply))
                 if event == "interrupt":
                     paused = True
+                    boundary = len("".join(reply))
                 yield _sse(event, data)
             text = "".join(reply)
+            thinking, content = split_reply(text, boundary)
             if text:
                 await db.messages.insert_one(
-                    {"id": uuid.uuid4().hex, **scope, "role": "assistant", "content": text, "created_at": _now()}
+                    {
+                        "id": uuid.uuid4().hex,
+                        **scope,
+                        "role": "assistant",
+                        "content": content,
+                        "thinking": thinking,
+                        "created_at": _now(),
+                    }
                 )
             if not paused:
                 yield _sse("done", {"chat_id": chat_id})
