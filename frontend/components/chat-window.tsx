@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Cable, Circle, CircleCheck, Loader2, Plus, Send, Sparkles, Wrench } from "lucide-react";
+import { BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench } from "lucide-react";
 
 import { Markdown } from "@/components/markdown";
 import { createChat, streamChatMessage } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
-import { relativeTime } from "@/lib/format";
+import { useChatSelection } from "@/lib/chat-selection";
 import { useChats, useMessages } from "@/lib/queries";
-import type { ChatSummary, TodoItem } from "@/lib/types";
+import type { TodoItem } from "@/lib/types";
 
 type ToolChip = { id: string; name: string; done: boolean };
 type RunState = { chatId: string; userContent: string; text: string; tools: ToolChip[]; todos: TodoItem[] };
@@ -33,52 +33,6 @@ const CAPABILITIES = [
     body: "Run MMM training locally or on Azure ML, with live progress, approvals and results saved per job.",
   },
 ];
-
-function ChatHistory({
-  signedIn,
-  items,
-  isPending,
-  error,
-  activeChatId,
-  disabled,
-  onSelect,
-}: {
-  signedIn: boolean;
-  items: ChatSummary[];
-  isPending: boolean;
-  error: Error | null;
-  activeChatId: string | null;
-  disabled: boolean;
-  onSelect: (id: string) => void;
-}) {
-  if (!signedIn) return <p className="px-3 py-2 text-sm text-muted-foreground">Sign in to see your chats</p>;
-  if (isPending) return <p className="px-3 py-2 text-sm text-muted-foreground">Loading…</p>;
-  if (error) return <p className="px-3 py-2 text-sm text-destructive">{error.message}</p>;
-  if (items.length === 0) return <p className="px-3 py-2 text-sm text-muted-foreground">No chats yet</p>;
-
-  return (
-    <div className="space-y-1">
-      {items.map((chat) => {
-        const active = chat.id === activeChatId;
-        return (
-          <button
-            key={chat.id}
-            type="button"
-            aria-current={active ? "true" : undefined}
-            disabled={disabled}
-            onClick={() => onSelect(chat.id)}
-            className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-              active ? "bg-magenta-wash text-primary" : "hover:bg-muted"
-            }`}
-          >
-            <span className="truncate">{chat.title}</span>
-            <span className="shrink-0 text-[11px] text-muted-foreground">{relativeTime(chat.updated_at)}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function Avatar() {
   return (
@@ -291,14 +245,18 @@ export function ChatWindow() {
   const token = useAccessToken();
   const queryClient = useQueryClient();
   const chats = useChats();
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const activeChatId = useChatSelection((state) => state.activeChatId);
+  const selectChat = useChatSelection((state) => state.select);
+  const busy = useChatSelection((state) => state.busy);
+  const setBusy = useChatSelection((state) => state.setBusy);
   const [run, setRun] = useState<RunState | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ chatId: string | null; message: string } | null>(null);
   const inFlight = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  const visibleError = error && error.chatId === activeChatId ? error.message : null;
 
   const activeTitle = chats.data?.find((chat) => chat.id === activeChatId)?.title ?? "Chat";
 
@@ -314,7 +272,7 @@ export function ChatWindow() {
     try {
       if (!chatId) {
         chatId = (await createChat(token)).id;
-        setActiveChatId(chatId);
+        selectChat(chatId);
       }
       const targetChatId = chatId;
       setRun({ chatId: targetChatId, userContent: content, text: "", tools: [], todos: [] });
@@ -346,7 +304,7 @@ export function ChatWindow() {
       return true;
     } catch (err) {
       if (controller.signal.aborted) return true;
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError({ chatId, message: err instanceof Error ? err.message : "Something went wrong" });
       return streamed;
     } finally {
       if (chatId) await queryClient.invalidateQueries({ queryKey: ["messages", token, chatId] });
@@ -361,97 +319,63 @@ export function ChatWindow() {
   const composerDisabled = !token || busy;
 
   return (
-    <div className="flex h-dvh min-h-0 min-w-0 flex-1">
-      <section aria-label="Chat history" className="hidden w-64 shrink-0 flex-col border-r border-border lg:flex">
-        <div className="p-3">
-          <button
-            type="button"
-            disabled={composerDisabled}
-            aria-label="New chat"
-            onClick={() => {
-              setActiveChatId(null);
-              setError(null);
-            }}
-            className="flex w-full items-center gap-2 rounded-md bg-cta px-3 py-2 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Plus className="size-4" />
-            New chat
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          <ChatHistory
-            signedIn={Boolean(token)}
-            items={chats.data ?? []}
-            isPending={chats.isPending}
-            error={chats.error}
-            activeChatId={activeChatId}
-            disabled={busy}
-            onSelect={(id) => {
-              setActiveChatId(id);
-              setError(null);
-            }}
-          />
-        </div>
-      </section>
+    <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
+      <header className="flex items-center border-b border-border px-6 py-4 md:px-10">
+        <h1 className="truncate text-sm font-semibold">{activeChatId ? activeTitle : "Chat"}</h1>
+      </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-center border-b border-border px-6 py-4 md:px-10">
-          <h1 className="truncate text-sm font-semibold">{activeChatId ? activeTitle : "Chat"}</h1>
-        </header>
+      {activeChatId ? (
+        <ChatThread
+          key={activeChatId}
+          chatId={activeChatId}
+          run={run}
+          error={visibleError}
+          disabled={composerDisabled}
+          onSend={sendMessage}
+        />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <section className="mx-auto flex w-full max-w-3xl flex-col items-center justify-center px-6 py-16 text-center">
+            <h2 className="text-4xl font-semibold tracking-tight md:text-5xl">
+              What should we <span className="text-primary">train</span> today?
+            </h2>
+            <p className="mt-4 max-w-xl text-base text-muted-foreground">
+              Dana AI turns your marketing data into predictive models. It asks the right questions, writes the training
+              code for your data, and keeps you updated while jobs run.
+            </p>
 
-        {activeChatId ? (
-          <ChatThread
-            key={activeChatId}
-            chatId={activeChatId}
-            run={run}
-            error={error}
-            disabled={composerDisabled}
-            onSend={sendMessage}
-          />
-        ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <section className="mx-auto flex w-full max-w-3xl flex-col items-center justify-center px-6 py-16 text-center">
-              <h2 className="text-4xl font-semibold tracking-tight md:text-5xl">
-                What should we <span className="text-primary">train</span> today?
-              </h2>
-              <p className="mt-4 max-w-xl text-base text-muted-foreground">
-                Dana AI turns your marketing data into predictive models. It asks the right questions, writes the training
-                code for your data, and keeps you updated while jobs run.
+            {!token && (
+              <p className="mt-6 rounded-md border border-border bg-card px-4 py-2 text-sm text-muted-foreground">
+                Sign in with an access token from the sidebar to load your chats and jobs.
               </p>
+            )}
 
-              {!token && (
-                <p className="mt-6 rounded-md border border-border bg-card px-4 py-2 text-sm text-muted-foreground">
-                  Sign in with an access token from the sidebar to load your chats and jobs.
-                </p>
-              )}
-
-              <div className="mt-10 grid w-full gap-4 md:grid-cols-3">
-                {CAPABILITIES.map(({ icon: Icon, title, body }) => (
-                  <div
-                    key={title}
-                    className="rounded-xl border border-border bg-card p-5 text-left shadow-sm transition-shadow hover:shadow-elevated"
-                  >
-                    <div className="mb-3 inline-flex size-9 items-center justify-center rounded-lg bg-magenta-wash text-primary">
-                      <Icon className="size-4" />
-                    </div>
-                    <h3 className="text-sm font-semibold">{title}</h3>
-                    <p className="mt-1.5 text-sm text-muted-foreground">{body}</p>
+            <div className="mt-10 grid w-full gap-4 md:grid-cols-3">
+              {CAPABILITIES.map(({ icon: Icon, title, body }) => (
+                <div
+                  key={title}
+                  className="rounded-xl border border-border bg-card p-5 text-left shadow-sm transition-shadow hover:shadow-elevated"
+                >
+                  <div className="mb-3 inline-flex size-9 items-center justify-center rounded-lg bg-magenta-wash text-primary">
+                    <Icon className="size-4" />
                   </div>
-                ))}
-              </div>
+                  <h3 className="text-sm font-semibold">{title}</h3>
+                  <p className="mt-1.5 text-sm text-muted-foreground">{body}</p>
+                </div>
+              ))}
+            </div>
 
-              <div className="mt-10 w-full text-left">
-                <ErrorBanner message={error} />
-                <Composer
-                  disabled={composerDisabled}
-                  placeholder={token ? "Describe the model you want to train…" : "Sign in to start a chat"}
-                  onSend={sendMessage}
-                />
-              </div>
-            </section>
-          </div>
-        )}
-      </div>
+            <div className="mt-10 w-full text-left">
+              <ErrorBanner message={visibleError} />
+              <Composer
+                disabled={composerDisabled}
+                placeholder={token ? "Describe the model you want to train…" : "Sign in to start a chat"}
+                onSend={sendMessage}
+              />
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
