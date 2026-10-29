@@ -56,8 +56,9 @@ class GetCalendarEventsInput(ToolInput):
     event_type: Literal["all", "public_holiday", "retail"] = Field(
         default="all", description="'public_holiday' for official holidays, 'retail' for shopping dates, or 'all'."
     )
-    timezone: str = Field(
-        default=DEFAULT_TIMEZONE, description="IANA timezone that defines the current year, for example 'Asia/Kolkata'."
+    timezone: str | None = Field(
+        default=None,
+        description="IANA timezone that defines the current year, for example 'Asia/Kolkata'. Leave empty to use the user's own timezone.",
     )
 
 
@@ -78,7 +79,7 @@ class GetCalendarEventsTool(BaseTool):
         start_date: str | None = None,
         end_date: str | None = None,
         event_type: str = "all",
-        timezone: str = DEFAULT_TIMEZONE,
+        timezone: str | None = None,
     ) -> ToolOutput:
         try:
             country = country.strip().upper()

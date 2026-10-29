@@ -37,6 +37,10 @@ export function resumeChat(
   return postStream(`/api/v1/chats/${chatId}/resume`, { decisions }, token, handlers, signal);
 }
 
+function clientTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
 async function postStream(
   path: string,
   body: unknown,
@@ -50,6 +54,7 @@ async function postStream(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Accept: "text/event-stream",
+      "X-Client-Timezone": clientTimezone(),
     },
     body: JSON.stringify(body),
     cache: "no-store",

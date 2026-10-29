@@ -71,9 +71,9 @@ class ResolveDateRangeInput(ToolInput):
     phrase: str = Field(
         description="A date phrase such as 'last 12 months', 'this year', 'last quarter', or an explicit 'YYYY-MM-DD to YYYY-MM-DD'."
     )
-    timezone: str = Field(
-        default=DEFAULT_TIMEZONE,
-        description="IANA timezone that defines 'today', for example 'UTC' or 'Asia/Kolkata'. Use the user's timezone when it is known.",
+    timezone: str | None = Field(
+        default=None,
+        description="IANA timezone that defines 'today', for example 'Asia/Kolkata'. Leave empty to use the user's own timezone.",
     )
 
 
@@ -87,7 +87,7 @@ class ResolveDateRangeTool(BaseTool):
     def get_input_schema(self) -> type[ToolInput]:
         return ResolveDateRangeInput
 
-    async def execute(self, phrase: str, timezone: str = DEFAULT_TIMEZONE) -> ToolOutput:
+    async def execute(self, phrase: str, timezone: str | None = None) -> ToolOutput:
         try:
             today = today_in(resolve_zone(timezone))
             start, end = resolve_range(phrase, today)
