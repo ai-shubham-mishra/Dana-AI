@@ -123,16 +123,18 @@ export function ThinkingBlock({
   status,
   answerStarted = false,
   hasContent,
+  defaultOpen,
   children,
 }: {
   live: boolean;
   status?: string;
   answerStarted?: boolean;
   hasContent: boolean;
+  defaultOpen?: boolean;
   children?: ReactNode;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const open = userOpen ?? (live && !answerStarted);
+  const open = userOpen ?? defaultOpen ?? (live && !answerStarted);
 
   return (
     <div className="rounded-xl border border-border text-sm">

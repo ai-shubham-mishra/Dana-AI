@@ -11,7 +11,7 @@ import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "
 import { useAccessToken } from "@/lib/auth";
 import { useChatSelection } from "@/lib/chat-selection";
 import { useChats, useMessages, usePending } from "@/lib/queries";
-import type { Decision, TodoItem } from "@/lib/types";
+import type { ChatMessage, Decision, TodoItem } from "@/lib/types";
 
 type ToolChip = { id: string; name: string; done: boolean };
 // boundary: text length at the last tool event; text before it is process, after it is the answer.
@@ -22,6 +22,8 @@ type RunState = {
   boundary: number;
   tools: ToolChip[];
   todos: TodoItem[];
+  // Saved message count when the run started; saved turns after it are shown by the live run.
+  baseCount: number;
 };
 
 const HIDDEN_TOOLS = new Set(["write_todos"]);
@@ -44,22 +46,16 @@ const CAPABILITIES = [
   },
 ];
 
-function Avatar() {
-  return (
-    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-magenta-wash text-primary">
-      <Sparkles className="size-3.5" />
-    </div>
-  );
-}
-
 function MessageBubble({
   role,
   content,
   thinking,
+  openThinking = false,
 }: {
   role: "user" | "assistant";
   content: string;
   thinking?: string | null;
+  openThinking?: boolean;
 }) {
   if (role === "user") {
     return (
@@ -69,16 +65,13 @@ function MessageBubble({
     );
   }
   return (
-    <div className="flex gap-3">
-      <Avatar />
-      <div className="min-w-0 flex-1 space-y-3 pt-0.5">
-        {thinking && (
-          <ThinkingBlock live={false} hasContent>
-            <Markdown className="text-xs text-muted-foreground">{thinking}</Markdown>
-          </ThinkingBlock>
-        )}
-        {content && <Markdown>{content}</Markdown>}
-      </div>
+    <div className="min-w-0 space-y-3">
+      {thinking && (
+        <ThinkingBlock live={false} hasContent defaultOpen={openThinking}>
+          <Markdown className="text-xs text-muted-foreground">{thinking}</Markdown>
+        </ThinkingBlock>
+      )}
+      {content && <Markdown>{content}</Markdown>}
     </div>
   );
 }
@@ -122,10 +115,8 @@ function LiveAssistant({ run }: { run: RunState }) {
         : "Thinking…";
   const hasProcess = tools.length > 0 || run.todos.length > 0 || process.length > 0;
   return (
-    <div className="flex gap-3">
-      <Avatar />
-      <div className="min-w-0 flex-1 space-y-3 pt-0.5">
-        <ThinkingBlock live status={status} answerStarted={answer.length > 0} hasContent={hasProcess}>
+    <div className="min-w-0 space-y-3">
+      <ThinkingBlock live status={status} answerStarted={answer.length > 0} hasContent={hasProcess}>
           {tools.length > 0 && (
             <ul className="flex flex-wrap gap-2">
               {tools.map((tool) => (
@@ -144,7 +135,6 @@ function LiveAssistant({ run }: { run: RunState }) {
           {process && <ReasoningTicker text={process} />}
         </ThinkingBlock>
         {answer && <Markdown animateWords>{answer}</Markdown>}
-      </div>
     </div>
   );
 }
@@ -214,6 +204,7 @@ function Composer({
 function ChatThread({
   chatId,
   run,
+  openTurnId,
   error,
   disabled,
   onSend,
@@ -221,6 +212,7 @@ function ChatThread({
 }: {
   chatId: string;
   run: RunState | null;
+  openTurnId: string | null;
   error: string | null;
   disabled: boolean;
   onSend: (content: string) => Promise<boolean>;
@@ -232,7 +224,8 @@ function ChatThread({
   const pendingApproval = liveRun ? null : (pending.data ?? null);
   const pendingId = pendingApproval?.interrupt_id ?? null;
   const bottomRef = useRef<HTMLDivElement>(null);
-  const messageCount = messages.data?.length ?? 0;
+  const savedMessages = liveRun ? messages.data?.slice(0, liveRun.baseCount) : messages.data;
+  const messageCount = savedMessages?.length ?? 0;
   const liveText = liveRun?.text ?? "";
   const liveSteps = (liveRun?.tools.length ?? 0) + (liveRun?.todos.length ?? 0);
 
@@ -246,10 +239,16 @@ function ChatThread({
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
           {messages.isPending && <p className="text-sm text-muted-foreground">Loading conversation…</p>}
           {messages.error && <p className="text-sm text-destructive">{messages.error.message}</p>}
-          {messages.data?.map((message) => (
-            <MessageBubble key={message.id} role={message.role} content={message.content} thinking={message.thinking} />
+          {savedMessages?.map((message) => (
+            <MessageBubble
+              key={message.id}
+              role={message.role}
+              content={message.content}
+              thinking={message.thinking}
+              openThinking={message.id === openTurnId}
+            />
           ))}
-          {messages.data?.length === 0 && !liveRun && (
+          {savedMessages?.length === 0 && !liveRun && (
             <p className="text-center text-sm text-muted-foreground">
               Describe the outcome you want to model. Dana will ask about your data before training.
             </p>
@@ -295,6 +294,7 @@ export function ChatWindow() {
   const busy = useChatSelection((state) => state.busy);
   const setBusy = useChatSelection((state) => state.setBusy);
   const [run, setRun] = useState<RunState | null>(null);
+  const [openTurnId, setOpenTurnId] = useState<string | null>(null);
   const [error, setError] = useState<{ chatId: string | null; message: string } | null>(null);
   const inFlight = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -319,13 +319,16 @@ export function ChatWindow() {
     abortRef.current = controller;
     let target = chatId;
     let streamed = false;
+    let baseCount = 0;
+    let openId: string | null = null;
     try {
       if (!target) {
         target = (await createChat(token)).id;
         selectChat(target);
       }
       const runChatId = target;
-      setRun({ chatId: runChatId, userContent, text: "", boundary: 0, tools: [], todos: [] });
+      baseCount = queryClient.getQueryData<ChatMessage[]>(["messages", token, runChatId])?.length ?? 0;
+      setRun({ chatId: runChatId, userContent, text: "", boundary: 0, tools: [], todos: [], baseCount });
       await start(runChatId, controller.signal, {
         onToken: (text) => {
           streamed = true;
@@ -365,8 +368,11 @@ export function ChatWindow() {
       if (target) {
         await queryClient.invalidateQueries({ queryKey: ["messages", token, target] });
         await queryClient.invalidateQueries({ queryKey: ["pending", token, target] });
+        const saved = queryClient.getQueryData<ChatMessage[]>(["messages", token, target]) ?? [];
+        openId = saved.slice(baseCount).find((message) => message.role === "assistant")?.id ?? null;
       }
       await queryClient.invalidateQueries({ queryKey: ["chats", token] });
+      setOpenTurnId(openId);
       setRun(null);
       abortRef.current = null;
       inFlight.current = false;
@@ -402,6 +408,7 @@ export function ChatWindow() {
           key={activeChatId}
           chatId={activeChatId}
           run={run}
+          openTurnId={openTurnId}
           error={visibleError}
           disabled={composerDisabled}
           onSend={sendMessage}
