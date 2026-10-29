@@ -24,6 +24,26 @@ export type TodoItem = {
   status: "pending" | "in_progress" | "completed" | string;
 };
 
+export type DecisionType = "approve" | "edit" | "reject" | "respond";
+
+export type PendingAction = {
+  name: string;
+  args: Record<string, unknown>;
+  description: string;
+  allowed_decisions: DecisionType[];
+};
+
+export type PendingApproval = {
+  interrupt_id: string;
+  actions: PendingAction[];
+};
+
+export type Decision = {
+  type: DecisionType;
+  message?: string;
+  edited_action?: { name: string; args: Record<string, unknown> };
+};
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
 
 export type JobSummary = {

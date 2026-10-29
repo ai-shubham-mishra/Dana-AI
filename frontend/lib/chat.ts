@@ -1,6 +1,6 @@
 import { API_BASE_URL, apiPost, raiseForStatus } from "./api";
 import { readSse } from "./sse";
-import type { ChatSummary, TodoItem } from "./types";
+import type { ChatSummary, Decision, PendingApproval, TodoItem } from "./types";
 
 export type ToolCallEvent = { id: string; name: string; args: Record<string, unknown> };
 
@@ -9,6 +9,7 @@ export type StreamHandlers = {
   onTodos?: (todos: TodoItem[]) => void;
   onToolCall?: (call: ToolCallEvent) => void;
   onToolResult?: (result: { id: string; name: string }) => void;
+  onInterrupt?: (pending: PendingApproval) => void;
   onDone?: () => void;
 };
 
@@ -16,21 +17,41 @@ export function createChat(token: string): Promise<ChatSummary> {
   return apiPost<ChatSummary>("/api/v1/chats", token);
 }
 
-export async function streamChatMessage(
+export function streamChatMessage(
   chatId: string,
   content: string,
   token: string,
   handlers: StreamHandlers,
   signal: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/v1/chats/${chatId}/messages`, {
+  return postStream(`/api/v1/chats/${chatId}/messages`, { content }, token, handlers, signal);
+}
+
+export function resumeChat(
+  chatId: string,
+  decisions: Decision[],
+  token: string,
+  handlers: StreamHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  return postStream(`/api/v1/chats/${chatId}/resume`, { decisions }, token, handlers, signal);
+}
+
+async function postStream(
+  path: string,
+  body: unknown,
+  token: string,
+  handlers: StreamHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
     cache: "no-store",
     signal,
   });
@@ -54,6 +75,9 @@ export async function streamChatMessage(
         break;
       case "error":
         throw new Error(String(payload.message ?? "The agent run failed"));
+      case "interrupt":
+        handlers.onInterrupt?.(payload as unknown as PendingApproval);
+        break;
       case "done":
         handlers.onDone?.();
         break;

@@ -4,15 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench } from "lucide-react";
 
+import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
-import { createChat, streamChatMessage } from "@/lib/chat";
+import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
 import { useChatSelection } from "@/lib/chat-selection";
-import { useChats, useMessages } from "@/lib/queries";
-import type { TodoItem } from "@/lib/types";
+import { useChats, useMessages, usePending } from "@/lib/queries";
+import type { Decision, TodoItem } from "@/lib/types";
 
 type ToolChip = { id: string; name: string; done: boolean };
-type RunState = { chatId: string; userContent: string; text: string; tools: ToolChip[]; todos: TodoItem[] };
+type RunState = { chatId: string; userContent: string | null; text: string; tools: ToolChip[]; todos: TodoItem[] };
 
 const HIDDEN_TOOLS = new Set(["write_todos"]);
 
@@ -190,15 +191,20 @@ function ChatThread({
   error,
   disabled,
   onSend,
+  onResume,
 }: {
   chatId: string;
   run: RunState | null;
   error: string | null;
   disabled: boolean;
   onSend: (content: string) => Promise<boolean>;
+  onResume: (decisions: Decision[]) => Promise<boolean>;
 }) {
   const messages = useMessages(chatId);
+  const pending = usePending(chatId);
   const liveRun = run?.chatId === chatId ? run : null;
+  const pendingApproval = liveRun ? null : (pending.data ?? null);
+  const pendingId = pendingApproval?.interrupt_id ?? null;
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageCount = messages.data?.length ?? 0;
   const liveText = liveRun?.text ?? "";
@@ -206,7 +212,7 @@ function ChatThread({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [messageCount, liveText, liveSteps]);
+  }, [messageCount, liveText, liveSteps, pendingId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -224,9 +230,17 @@ function ChatThread({
           )}
           {liveRun && (
             <>
-              <MessageBubble role="user" content={liveRun.userContent} />
+              {liveRun.userContent !== null && <MessageBubble role="user" content={liveRun.userContent} />}
               <LiveAssistant run={liveRun} />
             </>
+          )}
+          {pendingApproval && (
+            <ApprovalPanel
+              key={pendingApproval.interrupt_id}
+              pending={pendingApproval}
+              disabled={disabled}
+              onSubmit={(decisions) => void onResume(decisions)}
+            />
           )}
           <div ref={bottomRef} />
         </div>
@@ -234,12 +248,17 @@ function ChatThread({
       <div className="border-t border-border px-6 py-4">
         <div className="mx-auto w-full max-w-3xl">
           <ErrorBanner message={error} />
-          <Composer disabled={disabled} placeholder="Message Dana…" onSend={onSend} />
+          <Composer
+            disabled={disabled || Boolean(pendingApproval)}
+            placeholder={pendingApproval ? "Respond to the request above to continue" : "Message Dana…"}
+            onSend={onSend}
+          />
         </div>
       </div>
     </div>
   );
 }
+
 
 export function ChatWindow() {
   const token = useAccessToken();
@@ -260,60 +279,78 @@ export function ChatWindow() {
 
   const activeTitle = chats.data?.find((chat) => chat.id === activeChatId)?.title ?? "Chat";
 
-  async function sendMessage(content: string): Promise<boolean> {
-    if (!token || inFlight.current) return false;
+  async function runTurn(
+    token: string,
+    chatId: string | null,
+    userContent: string | null,
+    start: (target: string, signal: AbortSignal, handlers: StreamHandlers) => Promise<void>,
+  ): Promise<boolean> {
+    if (inFlight.current) return false;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     const controller = new AbortController();
     abortRef.current = controller;
-    let chatId = activeChatId;
+    let target = chatId;
     let streamed = false;
     try {
-      if (!chatId) {
-        chatId = (await createChat(token)).id;
-        selectChat(chatId);
+      if (!target) {
+        target = (await createChat(token)).id;
+        selectChat(target);
       }
-      const targetChatId = chatId;
-      setRun({ chatId: targetChatId, userContent: content, text: "", tools: [], todos: [] });
-      await streamChatMessage(
-        targetChatId,
-        content,
-        token,
-        {
-          onToken: (text) => {
-            streamed = true;
-            setRun((current) => (current ? { ...current, text: current.text + text } : current));
-          },
-          onTodos: (todos) => setRun((current) => (current ? { ...current, todos } : current)),
-          onToolCall: ({ id, name }) => {
-            streamed = true;
-            setRun((current) =>
-              current ? { ...current, tools: [...current.tools, { id, name, done: false }] } : current,
-            );
-          },
-          onToolResult: ({ id }) =>
-            setRun((current) =>
-              current
-                ? { ...current, tools: current.tools.map((tool) => (tool.id === id ? { ...tool, done: true } : tool)) }
-                : current,
-            ),
+      const runChatId = target;
+      setRun({ chatId: runChatId, userContent, text: "", tools: [], todos: [] });
+      await start(runChatId, controller.signal, {
+        onToken: (text) => {
+          streamed = true;
+          setRun((current) => (current ? { ...current, text: current.text + text } : current));
         },
-        controller.signal,
-      );
+        onTodos: (todos) => setRun((current) => (current ? { ...current, todos } : current)),
+        onToolCall: ({ id, name }) => {
+          streamed = true;
+          setRun((current) =>
+            current ? { ...current, tools: [...current.tools, { id, name, done: false }] } : current,
+          );
+        },
+        onToolResult: ({ id }) =>
+          setRun((current) =>
+            current
+              ? { ...current, tools: current.tools.map((tool) => (tool.id === id ? { ...tool, done: true } : tool)) }
+              : current,
+          ),
+        onInterrupt: (pending) => queryClient.setQueryData(["pending", token, runChatId], pending),
+      });
       return true;
     } catch (err) {
       if (controller.signal.aborted) return true;
-      setError({ chatId, message: err instanceof Error ? err.message : "Something went wrong" });
+      setError({ chatId: target, message: err instanceof Error ? err.message : "Something went wrong" });
       return streamed;
     } finally {
-      if (chatId) await queryClient.invalidateQueries({ queryKey: ["messages", token, chatId] });
+      if (target) {
+        await queryClient.invalidateQueries({ queryKey: ["messages", token, target] });
+        await queryClient.invalidateQueries({ queryKey: ["pending", token, target] });
+      }
       await queryClient.invalidateQueries({ queryKey: ["chats", token] });
       setRun(null);
       abortRef.current = null;
       inFlight.current = false;
       setBusy(false);
     }
+  }
+
+  function sendMessage(content: string): Promise<boolean> {
+    if (!token) return Promise.resolve(false);
+    return runTurn(token, activeChatId, content, (target, signal, handlers) =>
+      streamChatMessage(target, content, token, handlers, signal),
+    );
+  }
+
+  function resumeRun(decisions: Decision[]): Promise<boolean> {
+    if (!token || !activeChatId) return Promise.resolve(false);
+    return runTurn(token, activeChatId, null, (target, signal, handlers) => {
+      queryClient.setQueryData(["pending", token, target], null);
+      return resumeChat(target, decisions, token, handlers, signal);
+    });
   }
 
   const composerDisabled = !token || busy;
@@ -332,6 +369,7 @@ export function ChatWindow() {
           error={visibleError}
           disabled={composerDisabled}
           onSend={sendMessage}
+          onResume={resumeRun}
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
