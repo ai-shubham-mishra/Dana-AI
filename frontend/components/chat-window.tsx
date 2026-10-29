@@ -323,8 +323,10 @@ function ChatThread({
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
+
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
           {messages.isPending && <p className="text-sm text-muted-foreground">Loading conversation…</p>}
           {messages.error && <p className="text-sm text-destructive">{messages.error.message}</p>}
@@ -349,17 +351,18 @@ function ChatThread({
             />
           )}
         </div>
+        </div>
+        {showJump && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-primary shadow-elevated transition-colors hover:bg-magenta-wash"
+          >
+            <ArrowDown className="size-3.5" />
+            Back to bottom
+          </button>
+        )}
       </div>
-      {showJump && (
-        <button
-          type="button"
-          onClick={jumpToBottom}
-          className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-primary shadow-elevated transition-colors hover:bg-magenta-wash"
-        >
-          <ArrowDown className="size-3.5" />
-          Back to bottom
-        </button>
-      )}
       <div className="border-t border-border px-6 py-4">
         <div className="mx-auto w-full max-w-3xl">
           <ErrorBanner message={error} />
