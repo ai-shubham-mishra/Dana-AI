@@ -122,3 +122,23 @@ async def get_connector_page(
         "total_rows": total,
         "total_pages": max(1, math.ceil(total / page_size)),
     }
+
+
+async def get_connector_columns(pool: AsyncConnectionPool, schema: str, table: str) -> list[dict[str, str]] | None:
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(_TABLE_COLUMNS_SQL, (schema, table))
+        columns = await cur.fetchall()
+    if not columns:
+        return None
+    return [{"name": column["column_name"], "data_type": column["data_type"]} for column in columns]
+
+
+async def count_org_rows(pool: AsyncConnectionPool, schema: str, table: str, org_id: str) -> int:
+    relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
+    query = sql.SQL("SELECT count(*) AS total FROM {} WHERE {}::text = %s").format(
+        relation, sql.Identifier(ORG_COLUMN)
+    )
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, (org_id,))
+        row = await cur.fetchone()
+    return int(row["total"])

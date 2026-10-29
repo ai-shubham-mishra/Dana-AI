@@ -4,12 +4,12 @@ from datetime import date
 import pytest
 
 from agent.request_context import bind_client_timezone, parse_client_timezone
-from agent.tools.registry import TOOLS
+from agent.tools.registry import STATIC_TOOLS
 from agent.tools.system_ops.calendar.resolve_date_range import resolve_range
 from agent.tools.system_ops.utilities.calculate import calculate
 from api.routes.chats import _client_timezone
 
-TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
+TOOLS_BY_NAME = {tool.name: tool for tool in STATIC_TOOLS}
 TODAY = date(2026, 9, 28)
 
 

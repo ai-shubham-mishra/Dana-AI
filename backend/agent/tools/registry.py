@@ -19,15 +19,13 @@ from agent.tools.system_ops.connectors.list_connectors import ListConnectorsTool
 from agent.tools.system_ops.hitl.ask_user import AskUserTool
 from agent.tools.system_ops.utilities.calculate import CalculateTool
 
-# Every tool the agent can call. Each tool is defined in its own module; add new ones here.
-TOOLS = [
+# Tools that need no runtime dependencies. Connector tools are built per agent in build_tools().
+STATIC_TOOLS = [
     AskUserTool(),
     GetCurrentDateTool(),
     ResolveDateRangeTool(),
     GetCalendarEventsTool(),
     CalculateTool(),
-    ListConnectorsTool(),
-    ListChannelsWithinConnectorTool(),
     CheckLastJobTool(),
     CheckLatestModelTool(),
     CheckLastModelRunTool(),
@@ -40,13 +38,20 @@ TOOLS = [
     PrepareTrainingDataTool(),
     CreateEvaluatorsTool(),
     UpdateTrainingDataTool(),
-    ListChannelsTool(),
 ]
+
+
+def build_tools(connector_pool=None, datasets_schema: str = "datasets") -> list:
+    """Every tool the agent can call. Each tool is defined in its own module; add new ones here."""
+    connector_kwargs = {"pool": connector_pool, "datasets_schema": datasets_schema}
+    return [
+        *STATIC_TOOLS,
+        ListConnectorsTool(**connector_kwargs),
+        ListChannelsWithinConnectorTool(**connector_kwargs),
+        ListChannelsTool(**connector_kwargs),
+    ]
 
 
 def interrupt_policy(tools) -> dict:
     """Map each tool that needs a human decision to the decisions it allows."""
     return {tool.name: {"allowed_decisions": list(tool.allowed_decisions)} for tool in tools if tool.allowed_decisions}
-
-
-INTERRUPT_ON = interrupt_policy(TOOLS)
