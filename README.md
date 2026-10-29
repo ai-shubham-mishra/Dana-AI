@@ -16,8 +16,8 @@ Frontend styling follows the analytics-studio branding.
 
 - `backend/`: FastAPI service
   - `api/`: routes (`/api/v1/me`, `/chats`, `/jobs`) and the app factory
-  - `agent/`: deepagents orchestrator, `AGENTS.md` memory, and `skills/` (one folder per skill with `SKILL.md`)
-  - `integrations/`: `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs)
+  - `agent/`: deepagents orchestrator. Folders: `config/` (`AGENTS.md` memory and `parent_skill.md` playbook), `skills/` (one folder per skill with `SKILL.md`), `tools/` (per-domain tools), `components/` (todos, hitl, and other per-domain components), `middleware/` (custom deepagents middleware)
+  - `integrations/`: `auth/` (JWT verification and the Key Vault JWT secret loader), `keyvault/` (read-only secret reader), `llm/` (Claude via Azure AI Foundry), `mongo/` (users, chats, messages, jobs)
   - `config/`: settings loaded from `backend/.env`
   - `tests/`: pytest suite
 - `frontend/`: Next.js app (React, Tailwind, TanStack Query)
@@ -75,7 +75,7 @@ Copy `backend/.env.example` to `backend/.env`. Never commit `.env` files. Values
 |---|---|
 | `MONGO_URI`, `MONGO_DB` | Local Mongo connection |
 | `BLOB_CONNECTION_STRING`, `BLOB_CONTAINER` | Azurite blob storage |
-| `JWT_MASTER_TOKEN`, `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_LEEWAY_SECONDS` | HS256 access-token verification, same scheme as analytics-studio and DeepAgent |
+| `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_LEEWAY_SECONDS` | Access-token verification settings. The HS256 secret comes from Key Vault `JWT-MASTER-TOKEN` (same scheme as analytics-studio and DeepAgent) |
 | `CORS_ORIGINS`, `APP_ENV` | Browser origins and environment name |
 | `AZURE_KEYVAULT_URL` | Key Vault URL |
 | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | Bootstrap credentials for the read-only service principal |
@@ -83,16 +83,18 @@ Copy `backend/.env.example` to `backend/.env`. Never commit `.env` files. Values
 
 ### Key Vault access
 
-The backend reads secrets through a read-only service principal. It only calls `get_secret`. The LLM uses these secret names:
+The backend reads secrets through a read-only service principal. It only calls `get_secret`. Secrets used:
 
-- `AZURE-FOUNDARY-SC-API-ENDPOINT`
-- `AZURE-FOUNDARY-SC-API-KEY`
+- `JWT-MASTER-TOKEN`: HS256 key for access tokens. Loaded once at startup. If it cannot be read, auth returns 503 (fail closed).
+- `AZURE-FOUNDARY-SC-API-ENDPOINT`, `AZURE-FOUNDARY-SC-API-KEY`: Claude via Foundry. The LLM uses these.
 
 The "FOUNDARY" spelling is intentional and matches the DeepAgent vault. If the bootstrap variables are missing, the chat endpoints return 503 and do not fall back to any other credential.
+
+To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/bin/python scripts/seed_dev.py --user-id U --org-id O --mint-token`.
 
 ## Git workflow
 
 - `main` is the release branch. The owner merges it manually.
 - `staging` is the integration branch. Every issue and feature merges here first.
-- For each change: open an issue, create a branch linked to it (for example `feature/9-llm-agent-chat`), push, open a PR into `staging`, test, then merge.
+- For each change: open an issue, create a branch linked to it with `gh issue develop <n> --name feature/<n>-<slug> --base staging`, push, open a PR into `staging` that says `Refs #<n>`, test, then merge.
 - Commit messages carry a tag and the issue number: `(feature) #9 ...` or `(bugfix) #12 ...`.

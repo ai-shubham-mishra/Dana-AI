@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from integrations.auth.jwt_verifier import SecretNotConfigured, TokenError, verify_access_token
+from integrations.auth.jwt_verifier import TokenError, verify_access_token
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -28,13 +28,14 @@ async def get_principal(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise unauthorized
 
-    try:
-        claims = verify_access_token(credentials.credentials, request.app.state.settings)
-    except SecretNotConfigured as exc:
+    secret = request.app.state.jwt_secret
+    if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication is not configured",
-        ) from exc
+        )
+    try:
+        claims = verify_access_token(credentials.credentials, secret, request.app.state.settings)
     except TokenError as exc:
         raise unauthorized from exc
 

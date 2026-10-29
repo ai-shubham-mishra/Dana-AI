@@ -8,7 +8,7 @@ from agent.factory import build_dana_agent
 from api.main import create_app
 from integrations.keyvault.client import KeyVaultNotConfigured
 from tests.fakes import ScriptedModel
-from tests.test_api import ORG_A, ORG_B, USER_1, USER_2, auth, make_settings, member, mint, raw_db, settings  # noqa: F401
+from tests.test_api import ORG_A, ORG_B, USER_1, USER_2, auth, make_settings, member, mint, raw_db, settings, static_secret  # noqa: F401
 
 TODO_CALL = AIMessage(
     content="",
@@ -37,7 +37,7 @@ def failing_factory(settings, checkpointer):
 @pytest.fixture()
 def chat_client(raw_db):
     settings = make_settings()
-    with TestClient(create_app(settings, agent_factory=scripted_factory([TODO_CALL, REPLY]))) as c:
+    with TestClient(create_app(settings, agent_factory=scripted_factory([TODO_CALL, REPLY]), jwt_secret_loader=static_secret)) as c:
         yield c
 
 
@@ -119,7 +119,7 @@ def test_empty_message_is_rejected(chat_client, member):
 
 
 def test_key_vault_failure_returns_503_without_leaking_details(raw_db, member):
-    with TestClient(create_app(make_settings(), agent_factory=failing_factory)) as c:
+    with TestClient(create_app(make_settings(), agent_factory=failing_factory, jwt_secret_loader=static_secret)) as c:
         headers = auth(mint())
         chat_id = new_chat(c, headers)
         res = c.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "hi"}, headers=headers)
@@ -135,7 +135,7 @@ def test_agent_is_built_once_and_reused(raw_db, member):
         calls.append(1)
         return scripted_factory([REPLY])(settings, checkpointer)
 
-    with TestClient(create_app(make_settings(), agent_factory=counting_factory)) as c:
+    with TestClient(create_app(make_settings(), agent_factory=counting_factory, jwt_secret_loader=static_secret)) as c:
         headers = auth(mint())
         chat_id = new_chat(c, headers)
         c.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "one"}, headers=headers)

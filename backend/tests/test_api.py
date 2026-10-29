@@ -3,11 +3,11 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 from pymongo import MongoClient
 
 from api.main import create_app
 from config.settings import Settings
+from integrations.keyvault.client import KeyVaultNotConfigured
 
 TEST_SECRET = "test-only-secret-0123456789abcdef0123456789"
 TEST_DB = "dana_ai_test"
@@ -20,13 +20,16 @@ USER_2 = "user-2"
 def make_settings(**overrides) -> Settings:
     base = dict(
         mongo_db=TEST_DB,
-        jwt_master_token=SecretStr(TEST_SECRET),
         jwt_issuer="omnidoc",
         jwt_audience=None,
         jwt_leeway_seconds=0,
     )
     base.update(overrides)
     return Settings(**base)
+
+
+def static_secret(_settings: Settings) -> str:
+    return TEST_SECRET
 
 
 def mint(
@@ -72,7 +75,7 @@ def raw_db(settings):
 
 @pytest.fixture()
 def client(settings, raw_db):
-    with TestClient(create_app(settings)) as c:
+    with TestClient(create_app(settings, jwt_secret_loader=static_secret)) as c:
         yield c
 
 
@@ -131,9 +134,18 @@ def test_invalid_tokens_are_rejected(client, member, token_kwargs):
     assert res.status_code == 401
 
 
+def failing_secret(_settings: Settings) -> str:
+    raise KeyVaultNotConfigured("missing AZURE_KEYVAULT_URL")
+
+
 def test_missing_secret_fails_closed(raw_db):
-    client_settings = make_settings(jwt_master_token=None)
-    with TestClient(create_app(client_settings)) as c:
+    with TestClient(create_app(make_settings(), jwt_secret_loader=failing_secret)) as c:
+        res = c.get("/api/v1/me", headers=auth(mint()))
+    assert res.status_code == 503
+
+
+def test_empty_secret_fails_closed(raw_db):
+    with TestClient(create_app(make_settings(), jwt_secret_loader=lambda _s: "")) as c:
         res = c.get("/api/v1/me", headers=auth(mint()))
     assert res.status_code == 503
 

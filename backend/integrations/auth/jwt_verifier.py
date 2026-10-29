@@ -13,10 +13,6 @@ class TokenError(Exception):
     pass
 
 
-class SecretNotConfigured(Exception):
-    pass
-
-
 @dataclass(frozen=True)
 class TokenClaims:
     user_id: str
@@ -32,14 +28,11 @@ def _required_str(claims: dict, key: str) -> str:
     return value
 
 
-def verify_access_token(token: str, settings: Settings) -> TokenClaims:
-    if settings.jwt_master_token is None or not settings.jwt_master_token.get_secret_value():
-        raise SecretNotConfigured()
-
+def verify_access_token(token: str, secret: str, settings: Settings) -> TokenClaims:
     try:
         claims = jwt.decode(
             token,
-            settings.jwt_master_token.get_secret_value(),
+            secret,
             algorithms=[ALGORITHM],
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
