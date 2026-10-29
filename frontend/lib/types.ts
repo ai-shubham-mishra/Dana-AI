@@ -55,3 +55,23 @@ export type JobSummary = {
   created_at: string;
   updated_at: string;
 };
+
+export type ConnectorColumn = { name: string; data_type: string };
+
+export type ConnectorSummary = {
+  name: string;
+  row_estimate: number | null;
+  org_scoped: boolean;
+  columns: ConnectorColumn[];
+};
+
+export type ConnectorPage = {
+  name: string;
+  org_scoped: boolean;
+  columns: ConnectorColumn[];
+  rows: (string | number | boolean | null)[][];
+  page: number;
+  page_size: number;
+  total_rows: number;
+  total_pages: number;
+};
