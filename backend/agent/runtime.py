@@ -14,13 +14,19 @@ from agent.factory import build_dana_agent
 logger = logging.getLogger(__name__)
 
 
-def build_default_agent(settings: Settings, checkpointer: Any):
+def build_default_agent(settings: Settings, checkpointer: Any, connector_pool: Any = None):
     reader = build_keyvault_reader(settings)
     try:
         model = build_claude_model(reader, settings.llm_model)
     finally:
         reader.close()
-    return build_dana_agent(model, settings.agent_root, checkpointer=checkpointer)
+    return build_dana_agent(
+        model,
+        settings.agent_root,
+        checkpointer=checkpointer,
+        connector_pool=connector_pool,
+        datasets_schema=settings.datasets_schema,
+    )
 
 
 def _text_of(content: Any) -> str:

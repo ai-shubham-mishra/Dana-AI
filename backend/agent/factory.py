@@ -6,7 +6,7 @@ from deepagents.middleware.filesystem import FilesystemPermission
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.middleware import build_middleware
-from agent.tools.registry import INTERRUPT_ON, TOOLS
+from agent.tools.registry import build_tools, interrupt_policy
 
 BASE_PROMPT = (
     "You are Dana AI, an agent for marketing analytics and predictive modelling. "
@@ -27,13 +27,20 @@ def skill_sources(agent_root: Path) -> list[str]:
     return sorted(sources)
 
 
-def build_dana_agent(model, agent_root: Path, checkpointer=None):
+def build_dana_agent(
+    model,
+    agent_root: Path,
+    checkpointer=None,
+    connector_pool=None,
+    datasets_schema: str = "datasets",
+):
+    tools = build_tools(connector_pool=connector_pool, datasets_schema=datasets_schema)
     return create_deep_agent(
         model=model,
         system_prompt=load_system_prompt(agent_root),
         middleware=build_middleware(),
-        tools=TOOLS,
-        interrupt_on=INTERRUPT_ON,
+        tools=tools,
+        interrupt_on=interrupt_policy(tools),
         backend=FilesystemBackend(root_dir=agent_root, virtual_mode=True),
         memory=["/config/AGENTS.md"],
         skills=skill_sources(agent_root),

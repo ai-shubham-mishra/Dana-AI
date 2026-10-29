@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,6 @@ def create_app(
     training_command_factory: CommandFactory | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
-    agent_factory = agent_factory or build_default_agent
     jwt_secret_loader = jwt_secret_loader or load_jwt_secret
 
     async def fetch_jwt_secret() -> str | None:
@@ -52,14 +52,16 @@ def create_app(
         app.state.checkpoint_client, app.state.checkpointer = await asyncio.to_thread(
             create_mongo_checkpointer, settings.mongo_uri, settings.mongo_db
         )
-        app.state.agent_factory = agent_factory
-        app.state.agent = None
-        app.state.agent_lock = asyncio.Lock()
-        app.state.active_chats = set()
         app.state.connector_pool = None
         if settings.database_url_test:
             app.state.connector_pool = create_readonly_pool(settings.database_url_test.get_secret_value())
             await app.state.connector_pool.open(wait=False)
+        app.state.agent_factory = agent_factory or partial(
+            build_default_agent, connector_pool=app.state.connector_pool
+        )
+        app.state.agent = None
+        app.state.agent_lock = asyncio.Lock()
+        app.state.active_chats = set()
         app.state.training = TrainingService(
             db=db, blob=blob, settings=settings, command_factory=training_command_factory
         )
