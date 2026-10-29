@@ -105,6 +105,7 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 
 - Text the agent writes before its last tool event is process. It is stored in the message's `thinking` field and shown in a collapsible **Thinking** block. The text after the last tool event is the answer, stored in `content`. A run that pauses for approval stores its text as thinking only.
 - The approval card renders outside the Thinking block.
+- A finished run stays mounted in the thread, and its Thinking block stays open. It is not swapped for the saved message during the same session. After a page reload, the saved message is shown instead, without tool or todo chips.
 
 ## Git workflow
 

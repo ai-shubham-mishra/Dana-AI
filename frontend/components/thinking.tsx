@@ -121,28 +121,26 @@ export function ToolStatusIcon({ done }: { done: boolean }) {
 export function ThinkingBlock({
   live,
   status,
-  answerStarted = false,
   hasContent,
-  defaultOpen,
+  defaultOpen = false,
   children,
 }: {
   live: boolean;
   status?: string;
-  answerStarted?: boolean;
   hasContent: boolean;
   defaultOpen?: boolean;
   children?: ReactNode;
 }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const open = userOpen ?? defaultOpen ?? (live && !answerStarted);
+  const open = userOpen ?? defaultOpen;
 
   return (
-    <div className="rounded-xl border border-border text-sm">
+    <div className="text-sm">
       <button
         type="button"
         onClick={() => setUserOpen(!open)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 px-3 py-2 text-left"
+        className="flex items-center gap-2 py-1 text-left"
       >
         {live && <MatrixDotLoader />}
         {live ? (
@@ -151,10 +149,11 @@ export function ThinkingBlock({
           <span className="text-xs font-medium text-muted-foreground">Thinking</span>
         )}
         <ChevronDown
-          className={`ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+          className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
-      {open && hasContent && <div className="space-y-3 border-t border-border px-3 py-2.5">{children}</div>}
+      {open && hasContent && <div className="mt-2 space-y-3">{children}</div>}
     </div>
   );
 }
+
