@@ -5,4 +5,4 @@ description: Build a training dataset from the selected connector's table for th
 
 # prepare_training_data
 
-Use after the user has picked the connector, KPI, channels and date range. Report the row count and any gaps the tool returns.
+Use after the user has picked the connector, KPI and channels, and a date range has been resolved with the calendar tools. Report the row count and any gaps the tool returns.

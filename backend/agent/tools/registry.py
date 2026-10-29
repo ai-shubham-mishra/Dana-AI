@@ -11,13 +11,21 @@ from agent.tools.ml_ops.ml.training.create_training_script import CreateTraining
 from agent.tools.ml_ops.ml.training.initiate_ml_training import InitiateMLTrainingTool
 from agent.tools.ml_ops.ml.training.save_ml_assets import SaveMLAssetsTool
 from agent.tools.ml_ops.ml.training.start_training_job import StartTrainingJobTool
+from agent.tools.system_ops.calendar.get_calendar_events import GetCalendarEventsTool
+from agent.tools.system_ops.calendar.get_current_date import GetCurrentDateTool
+from agent.tools.system_ops.calendar.resolve_date_range import ResolveDateRangeTool
 from agent.tools.system_ops.connectors.list_channels_within_connector import ListChannelsWithinConnectorTool
 from agent.tools.system_ops.connectors.list_connectors import ListConnectorsTool
 from agent.tools.system_ops.hitl.ask_user import AskUserTool
+from agent.tools.system_ops.utilities.calculate import CalculateTool
 
 # Every tool the agent can call. Each tool is defined in its own module; add new ones here.
 TOOLS = [
     AskUserTool(),
+    GetCurrentDateTool(),
+    ResolveDateRangeTool(),
+    GetCalendarEventsTool(),
+    CalculateTool(),
     ListConnectorsTool(),
     ListChannelsWithinConnectorTool(),
     CheckLastJobTool(),
