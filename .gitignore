@@ -8,3 +8,5 @@ node_modules/
 .next/
 models/
 data/
+/resources/
+backend/var/

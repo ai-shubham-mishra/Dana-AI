@@ -52,6 +52,10 @@ export type JobSummary = {
   title: string;
   kind: string;
   status: JobStatus;
+  stage: string | null;
+  percent: number;
+  message: string | null;
+  error: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -74,4 +78,23 @@ export type ConnectorPage = {
   page_size: number;
   total_rows: number;
   total_pages: number;
+};
+
+export type JobEvent = {
+  stage: string;
+  percent: number;
+  message: string;
+  created_at: string;
+};
+
+export type JobArtifact = {
+  name: string;
+  bytes: number;
+};
+
+export type JobDetail = JobSummary & {
+  params: Record<string, unknown> | null;
+  metrics: Record<string, unknown> | null;
+  artifact: JobArtifact | null;
+  events: JobEvent[];
 };

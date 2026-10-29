@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     llm_model: str = "claude-sonnet-5-5"
     agent_root: Path = BACKEND_ROOT / "agent"
 
+    training_output_dir: Path = BACKEND_ROOT / "var" / "training"
+    training_mmm_dir: Path = BACKEND_ROOT / "resources" / "training" / "mmm"
+
 
 @lru_cache
 def get_settings() -> Settings:

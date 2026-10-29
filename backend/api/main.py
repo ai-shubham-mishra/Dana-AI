@@ -13,6 +13,7 @@ from integrations.checkpoint.mongo import create_mongo_checkpointer
 from integrations.mongo.client import create_mongo_client, ensure_indexes
 from integrations.postgres.client import create_readonly_pool
 from integrations.storage.blob import create_blob_service, ensure_container
+from integrations.training.service import CommandFactory, TrainingService
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ def create_app(
     settings: Settings | None = None,
     agent_factory=None,
     jwt_secret_loader: Callable[[Settings], str] | None = None,
+    training_command_factory: CommandFactory | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     agent_factory = agent_factory or build_default_agent
@@ -58,9 +60,13 @@ def create_app(
         if settings.database_url_test:
             app.state.connector_pool = create_readonly_pool(settings.database_url_test.get_secret_value())
             await app.state.connector_pool.open(wait=False)
+        app.state.training = TrainingService(
+            db=db, blob=blob, settings=settings, command_factory=training_command_factory
+        )
         try:
             yield
         finally:
+            await app.state.training.close()
             if app.state.connector_pool is not None:
                 await app.state.connector_pool.close()
             await blob.close()

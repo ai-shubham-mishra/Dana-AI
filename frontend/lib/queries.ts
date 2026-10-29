@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiGet, ApiError } from "./api";
 import { useAccessToken } from "./auth";
-import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, JobSummary, Me, PendingApproval } from "./types";
+import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, JobDetail, JobSummary, Me, PendingApproval } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -35,6 +35,20 @@ export function useConnectorRows(name: string | null, page: number, pageSize: nu
     enabled: Boolean(token && name),
     placeholderData: (previous) => previous,
     refetchOnWindowFocus: false,
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
+
+export function useJob(jobId: string | null) {
+  const token = useAccessToken();
+  return useQuery<JobDetail, ApiError>({
+    queryKey: ["job", token, jobId],
+    queryFn: () => apiGet<JobDetail>(`/api/v1/jobs/${jobId}`, token),
+    enabled: Boolean(token && jobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "queued" || status === "running" ? POLL_INTERVAL_MS : false;
+    },
     retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
   });
 }
