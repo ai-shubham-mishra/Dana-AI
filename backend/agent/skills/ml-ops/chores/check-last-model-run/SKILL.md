@@ -1,6 +1,6 @@
 ---
 name: check-last-model-run
-description: Look up the most recent model run, including its status and metrics.
+description: Look up the most recent finished model run (succeeded or failed) with its status and metrics.
 ---
 
 # check_last_model_run

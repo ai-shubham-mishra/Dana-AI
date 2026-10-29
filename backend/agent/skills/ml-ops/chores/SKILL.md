@@ -1,6 +1,6 @@
 ---
 name: chores
-description: Check the status of past and current training jobs and models for the user's organization.
+description: Check the status of past and current training jobs and models for the signed-in user.
 ---
 
 # Chores

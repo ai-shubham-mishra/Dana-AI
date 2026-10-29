@@ -1,6 +1,6 @@
 ---
 name: check-latest-model
-description: Look up the latest trained model artifact for a model family.
+description: Look up the latest successfully trained model and its saved artifact for the signed-in user.
 ---
 
 # check_latest_model

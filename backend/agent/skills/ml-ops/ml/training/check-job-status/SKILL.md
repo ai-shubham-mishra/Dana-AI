@@ -1,6 +1,6 @@
 ---
 name: check-job-status
-description: Check the status and progress of a training job.
+description: Check the status, progress and outcome of a training job by id for the signed-in user.
 ---
 
 # check_job_status
