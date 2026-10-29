@@ -6,16 +6,19 @@ import { Check, Pencil, Reply, ShieldAlert, X, type LucideIcon } from "lucide-re
 import { Markdown } from "@/components/markdown";
 import type { Decision, DecisionType, PendingAction, PendingApproval } from "@/lib/types";
 
-type Draft = { choice: DecisionType | null; message: string; argsText: string };
+type ResponseType = "single_select" | "multi_select" | "text" | "number" | "boolean";
+type Draft = { choice: DecisionType | null; message: string; value: unknown; argsText: string };
 
 const LABELS: Record<DecisionType, string> = { approve: "Approve", edit: "Edit", reject: "Reject", respond: "Answer" };
 const ICONS: Record<DecisionType, LucideIcon> = { approve: Check, edit: Pencil, reject: X, respond: Reply };
 const FIELD =
   "w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50";
+const CHIP =
+  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 
 function initialDraft(action: PendingAction): Draft {
   const choice = action.allowed_decisions.length === 1 ? action.allowed_decisions[0] : null;
-  return { choice, message: "", argsText: JSON.stringify(action.args, null, 2) };
+  return { choice, message: "", value: undefined, argsText: JSON.stringify(action.args, null, 2) };
 }
 
 function parseArgs(text: string): Record<string, unknown> | null {
@@ -32,8 +35,39 @@ function optionsOf(action: PendingAction): string[] {
   return Array.isArray(options) ? options.filter((option): option is string => typeof option === "string") : [];
 }
 
+function responseTypeOf(action: PendingAction): ResponseType {
+  const declared = action.args.response_type;
+  const type: ResponseType =
+    declared === "single_select" || declared === "multi_select" || declared === "number" || declared === "boolean"
+      ? declared
+      : "text";
+  return (type === "single_select" || type === "multi_select") && optionsOf(action).length === 0 ? "text" : type;
+}
+
 function formatValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function answerFor(action: PendingAction, draft: Draft): Decision | null {
+  const type = responseTypeOf(action);
+  const options = optionsOf(action);
+  if (type === "text") {
+    const message = draft.message.trim();
+    return message ? { type: "respond", message } : null;
+  }
+  if (type === "single_select") {
+    return typeof draft.value === "string" && options.includes(draft.value) ? { type: "respond", value: draft.value } : null;
+  }
+  if (type === "multi_select") {
+    const picked = Array.isArray(draft.value) ? draft.value : [];
+    const valid = picked.length > 0 && picked.every((item) => typeof item === "string" && options.includes(item));
+    return valid ? { type: "respond", value: picked } : null;
+  }
+  if (type === "number") {
+    const number = Number(draft.message);
+    return draft.message.trim() && Number.isFinite(number) ? { type: "respond", value: number } : null;
+  }
+  return typeof draft.value === "boolean" ? { type: "respond", value: draft.value } : null;
 }
 
 export function buildDecisions(actions: PendingAction[], drafts: Draft[]): Decision[] | null {
@@ -47,8 +81,9 @@ export function buildDecisions(actions: PendingAction[], drafts: Draft[]): Decis
     } else if (draft.choice === "reject") {
       decisions.push(message ? { type: "reject", message } : { type: "reject" });
     } else if (draft.choice === "respond") {
-      if (!message) return null;
-      decisions.push({ type: "respond", message });
+      const answer = answerFor(action, draft);
+      if (!answer) return null;
+      decisions.push(answer);
     } else {
       const args = parseArgs(draft.argsText);
       if (!args) return null;
@@ -56,6 +91,110 @@ export function buildDecisions(actions: PendingAction[], drafts: Draft[]): Decis
     }
   }
   return decisions;
+}
+
+function AnswerInput({
+  action,
+  draft,
+  disabled,
+  onChange,
+}: {
+  action: PendingAction;
+  draft: Draft;
+  disabled: boolean;
+  onChange: (patch: Partial<Draft>) => void;
+}) {
+  const type = responseTypeOf(action);
+  const options = optionsOf(action);
+  const picked = Array.isArray(draft.value) ? (draft.value as string[]) : [];
+
+  if (type === "single_select" || type === "multi_select") {
+    return (
+      <div role="group" aria-label="Your answer" className="mt-3 flex flex-wrap gap-2">
+        {options.map((option) => {
+          const selected = type === "single_select" ? draft.value === option : picked.includes(option);
+          return (
+            <button
+              key={option}
+              type="button"
+              disabled={disabled}
+              aria-pressed={selected}
+              onClick={() => {
+                if (type === "single_select") return onChange({ value: option });
+                onChange({ value: selected ? picked.filter((item) => item !== option) : [...picked, option] });
+              }}
+              className={`${CHIP} ${selected ? "border-cta bg-cta text-cta-foreground" : "border-border bg-card hover:bg-muted"}`}
+            >
+              {selected && type === "multi_select" && <Check className="size-3" />}
+              {option}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+  if (type === "boolean") {
+    return (
+      <div role="group" aria-label="Your answer" className="mt-3 flex gap-2">
+        {[
+          { label: "Yes", value: true },
+          { label: "No", value: false },
+        ].map(({ label, value }) => (
+          <button
+            key={label}
+            type="button"
+            disabled={disabled}
+            aria-pressed={draft.value === value}
+            onClick={() => onChange({ value })}
+            className={`${CHIP} px-4 ${draft.value === value ? "border-cta bg-cta text-cta-foreground" : "border-border bg-card hover:bg-muted"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (type === "number") {
+    return (
+      <input
+        type="number"
+        aria-label="Your answer"
+        value={draft.message}
+        disabled={disabled}
+        placeholder="Enter a number…"
+        onChange={(event) => onChange({ message: event.target.value })}
+        className={`${FIELD} mt-3`}
+      />
+    );
+  }
+  return (
+    <>
+      {options.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange({ message: option })}
+              className="rounded-full border border-border bg-card px-3 py-1 text-xs transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+      <textarea
+        aria-label="Your answer"
+        value={draft.message}
+        disabled={disabled}
+        rows={2}
+        placeholder="Type your answer…"
+        onChange={(event) => onChange({ message: event.target.value })}
+        className={`${FIELD} mt-3`}
+      />
+    </>
+  );
 }
 
 function ApprovalCard({
@@ -69,7 +208,6 @@ function ApprovalCard({
   disabled: boolean;
   onChange: (patch: Partial<Draft>) => void;
 }) {
-  const options = optionsOf(action);
   const details = action.name === "ask_user" ? [] : Object.entries(action.args);
   const argsError = draft.choice === "edit" && !parseArgs(draft.argsText) ? "Edited arguments must be a JSON object." : null;
 
@@ -115,33 +253,7 @@ function ApprovalCard({
         </div>
       )}
 
-      {draft.choice === "respond" && action.allowed_decisions.includes("respond") && options.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              disabled={disabled}
-              onClick={() => onChange({ message: option })}
-              className="rounded-full border border-border bg-card px-3 py-1 text-xs transition-colors hover:bg-muted disabled:opacity-50"
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {draft.choice === "respond" && (
-        <textarea
-          aria-label="Your answer"
-          value={draft.message}
-          disabled={disabled}
-          rows={2}
-          placeholder="Type your answer…"
-          onChange={(event) => onChange({ message: event.target.value })}
-          className={`${FIELD} mt-3`}
-        />
-      )}
+      {draft.choice === "respond" && <AnswerInput action={action} draft={draft} disabled={disabled} onChange={onChange} />}
       {draft.choice === "reject" && (
         <textarea
           aria-label="Reason"
