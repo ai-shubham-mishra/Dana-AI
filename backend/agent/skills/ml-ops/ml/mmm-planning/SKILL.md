@@ -11,10 +11,10 @@ Use this skill when the user wants to build, run, or understand a Marketing Mix 
 
 1. Confirm the business KPI (for example revenue, conversions, or sign-ups) and its currency.
 2. Ask which marketing channels to model (for example Meta Ads, Google Ads, TV, email).
-3. Ask for the date range of the historical data, in the form `YYYY-MM-DD to YYYY-MM-DD`.
+3. Resolve the date range of the historical data without asking: call `get_current_date`, then `resolve_date_range` with the user's phrase (for example "last 12 months"). Use the result in the form `YYYY-MM-DD to YYYY-MM-DD`. Ask for dates only if `resolve_date_range` returns an error.
 4. Ask which connector or data source holds each channel's spend and the KPI.
 5. Summarize the inputs in a short list and confirm them before proposing next steps.
-6. When the user asks to train, call `start_training_job` with `model="mmm"`, the KPI, the channels, and the date range. A human approves, edits, or rejects the request first.
+6. When the user asks to train, call `start_training_job` with `model="mmm"`, the KPI, the channels, and the resolved date range. A human approves, edits, or rejects the request first.
 
 ## Bundled dataset (for now)
 
@@ -30,4 +30,4 @@ If the user asks for a KPI or channel outside this list, say so and do not submi
 
 - Do not claim any results before a job has succeeded. Point the user to the Jobs tab for progress and output.
 - Do not guess column names or values. Ask the user.
-- Do not submit a training request until the KPI, channels, and date range are confirmed.
+- Do not submit a training request until the KPI and channels are confirmed and a date range has been resolved.

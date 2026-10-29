@@ -10,6 +10,7 @@ from integrations.llm.foundry import build_claude_model
 from integrations.training.scope import JobScope, bind_scope
 from agent.middleware import TODO_TOOL, todos_from_args
 from agent.factory import build_dana_agent
+from agent.request_context import bind_client_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,10 @@ async def stream_turn(
     content: str | None = None,
     decisions: list[dict] | None = None,
     job_scope: JobScope | None = None,
+    timezone: str | None = None,
 ) -> AsyncIterator[tuple[str, dict]]:
     bind_scope(job_scope)
+    bind_client_timezone(timezone)
     config = _config(chat_id)
     if decisions is not None:
         payload: Any = Command(resume={"decisions": decisions})
