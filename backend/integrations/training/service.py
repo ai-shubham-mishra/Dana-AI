@@ -25,6 +25,22 @@ MMM_DATA_FILE = "mmm_demo.csv"
 MMM_CONFIG_FILE = "mmm_demo.yaml"
 MODEL_FILE = "mmm_model.nc"
 STDERR_TAIL = 20
+JOB_PROJECTION = {
+    "_id": 0,
+    "id": 1,
+    "title": 1,
+    "kind": 1,
+    "status": 1,
+    "stage": 1,
+    "percent": 1,
+    "message": 1,
+    "error": 1,
+    "params": 1,
+    "metrics": 1,
+    "artifact": 1,
+    "created_at": 1,
+    "updated_at": 1,
+}
 
 CommandFactory = Callable[[Path, MMMRequest], list[str]]
 
@@ -104,6 +120,26 @@ class TrainingService:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job_id
+
+    async def get_job(self, *, org_id: str, user_id: str, job_id: str) -> dict[str, Any] | None:
+        return await self._db.jobs.find_one(
+            {"id": job_id, "org_id": org_id, "user_id": user_id}, JOB_PROJECTION
+        )
+
+    async def find_latest_job(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        kind: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
+        query: dict[str, Any] = {"org_id": org_id, "user_id": user_id}
+        if kind:
+            query["kind"] = kind
+        if statuses:
+            query["status"] = {"$in": list(statuses)}
+        return await self._db.jobs.find_one(query, JOB_PROJECTION, sort=[("created_at", -1)])
 
     async def close(self) -> None:
         tasks = list(self._tasks)
