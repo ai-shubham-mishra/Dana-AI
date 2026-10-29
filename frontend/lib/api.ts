@@ -12,6 +12,18 @@ export class ApiError extends Error {
   }
 }
 
+export async function raiseForStatus(res: Response): Promise<void> {
+  if (res.ok) return;
+  let message = res.statusText || "Request failed";
+  try {
+    const body = (await res.json()) as { detail?: unknown };
+    if (typeof body.detail === "string") message = body.detail;
+  } catch {
+    // Non-JSON error body; keep the status text.
+  }
+  throw new ApiError(res.status, message);
+}
+
 export async function apiGet<T>(path: string, token: string | null = getAccessToken()): Promise<T> {
   if (!token) {
     throw new ApiError(401, "Sign in to continue");
@@ -21,17 +33,16 @@ export async function apiGet<T>(path: string, token: string | null = getAccessTo
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
+  await raiseForStatus(res);
+  return (await res.json()) as T;
+}
 
-  if (!res.ok) {
-    let message = res.statusText || "Request failed";
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") message = body.detail;
-    } catch {
-      // Non-JSON error body; keep the status text.
-    }
-    throw new ApiError(res.status, message);
-  }
-
+export async function apiPost<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
   return (await res.json()) as T;
 }

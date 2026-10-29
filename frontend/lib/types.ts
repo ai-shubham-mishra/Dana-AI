@@ -12,6 +12,18 @@ export type ChatSummary = {
   updated_at: string;
 };
 
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type TodoItem = {
+  content: string;
+  status: "pending" | "in_progress" | "completed" | string;
+};
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
 
 export type JobSummary = {
