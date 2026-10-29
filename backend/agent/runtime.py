@@ -6,11 +6,10 @@ from config.settings import Settings
 from integrations.keyvault.client import build_keyvault_reader
 from integrations.llm.foundry import build_claude_model
 
+from agent.components.todos import TODO_TOOL, todos_from_args
 from agent.factory import build_dana_agent
 
 logger = logging.getLogger(__name__)
-
-TODO_TOOL = "write_todos"
 
 
 def build_default_agent(settings: Settings, checkpointer: Any):
@@ -46,7 +45,7 @@ async def stream_turn(agent: Any, chat_id: str, content: str) -> AsyncIterator[t
             name = event.get("name", "")
             args = data.get("input") or {}
             if name == TODO_TOOL:
-                yield "todos", {"todos": args.get("todos", [])}
+                yield "todos", {"todos": todos_from_args(args)}
             yield "tool_call", {"id": str(event["run_id"]), "name": name, "args": args}
         elif kind == "on_tool_end":
             yield "tool_result", {"id": str(event["run_id"]), "name": event.get("name", "")}
