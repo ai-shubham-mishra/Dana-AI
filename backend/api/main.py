@@ -1,4 +1,6 @@
 import asyncio
+import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,13 +10,28 @@ from langgraph.checkpoint.memory import MemorySaver
 from agent.runtime import build_default_agent
 from api.routes import chats, health, jobs, me
 from config.settings import Settings, get_settings
+from integrations.auth.jwt_secret import load_jwt_secret
 from integrations.mongo.client import create_mongo_client, ensure_indexes
 from integrations.storage.blob import create_blob_service, ensure_container
 
+logger = logging.getLogger(__name__)
 
-def create_app(settings: Settings | None = None, agent_factory=None) -> FastAPI:
+
+def create_app(
+    settings: Settings | None = None,
+    agent_factory=None,
+    jwt_secret_loader: Callable[[Settings], str] | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
     agent_factory = agent_factory or build_default_agent
+    jwt_secret_loader = jwt_secret_loader or load_jwt_secret
+
+    async def fetch_jwt_secret() -> str | None:
+        try:
+            return await asyncio.to_thread(jwt_secret_loader, settings)
+        except Exception as exc:
+            logger.warning("JWT secret unavailable from Key Vault (%s); auth will fail closed", type(exc).__name__)
+            return None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -26,6 +43,7 @@ def create_app(settings: Settings | None = None, agent_factory=None) -> FastAPI:
         await ensure_container(blob, settings.blob_container)
 
         app.state.settings = settings
+        app.state.jwt_secret = await fetch_jwt_secret()
         app.state.mongo = mongo
         app.state.db = db
         app.state.blob = blob

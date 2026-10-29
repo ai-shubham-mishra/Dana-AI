@@ -6,12 +6,15 @@ import jwt
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from config.settings import get_settings
+from integrations.auth.jwt_secret import load_jwt_secret
 
 
 def mint_dev_token(user_id: str, org_id: str, email: str, role: str, hours: int) -> str:
     settings = get_settings()
-    if settings.jwt_master_token is None:
-        raise SystemExit("JWT_MASTER_TOKEN is not set in backend/.env")
+    try:
+        secret = load_jwt_secret(settings)
+    except Exception as exc:
+        raise SystemExit(f"Could not read JWT-MASTER-TOKEN from Key Vault ({type(exc).__name__}).") from exc
     now = datetime.now(timezone.utc)
     payload = {
         "userId": user_id,
@@ -23,7 +26,7 @@ def mint_dev_token(user_id: str, org_id: str, email: str, role: str, hours: int)
         "iat": now,
         "exp": now + timedelta(hours=hours),
     }
-    return jwt.encode(payload, settings.jwt_master_token.get_secret_value(), algorithm="HS256")
+    return jwt.encode(payload, secret, algorithm="HS256")
 
 
 async def seed(args: argparse.Namespace) -> None:

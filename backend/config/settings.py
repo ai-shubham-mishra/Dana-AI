@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     mongo_uri: str = "mongodb://dana:dana-dev-password@localhost:27017/?authSource=admin"
     mongo_db: str = "dana_ai"
 
-    jwt_master_token: SecretStr | None = None
     jwt_issuer: str = "omnidoc"
     jwt_audience: str | None = None
     jwt_leeway_seconds: int = 0
@@ -29,6 +28,7 @@ class Settings(BaseSettings):
     blob_container: str = "dana-ai-files"
 
     # Key Vault bootstrap (read-only service principal). Secrets are never read from .env.
+    # The JWT verification secret is JWT-MASTER-TOKEN in Key Vault (see integrations/auth/jwt_secret.py).
     azure_keyvault_url: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
