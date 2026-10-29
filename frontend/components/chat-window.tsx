@@ -294,6 +294,15 @@ export function ChatWindow() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  useEffect(() => {
+    void useChatSelection.persist.rehydrate();
+  }, []);
+
+  useEffect(() => {
+    if (busy || !chats.data || !activeChatId) return;
+    if (!chats.data.some((chat) => chat.id === activeChatId)) selectChat(null);
+  }, [busy, chats.data, activeChatId, selectChat]);
+
   const visibleError = error && error.chatId === activeChatId ? error.message : null;
 
   const activeTitle = chats.data?.find((chat) => chat.id === activeChatId)?.title ?? "Chat";

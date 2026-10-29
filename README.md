@@ -107,6 +107,12 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - The approval card renders outside the Thinking block.
 - A finished run stays mounted in the thread, and its Thinking block stays open. It is not swapped for the saved message during the same session. After a page reload, the saved message is shown instead, without tool or todo chips.
 
+## Sessions and reload
+
+- The selected chat is saved in `localStorage` under `dana.chatSelection`. A page reload reopens that chat.
+- If the saved chat is no longer in your chat list (deleted, or saved by another account on the same browser), the selection is cleared and the empty state shows.
+- Choosing **New chat** clears the saved selection.
+
 ## Git workflow
 
 - `main` is the release branch. The owner merges it manually.

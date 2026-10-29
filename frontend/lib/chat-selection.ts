@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 type ChatSelectionState = {
   activeChatId: string | null;
@@ -9,9 +10,19 @@ type ChatSelectionState = {
   setBusy: (busy: boolean) => void;
 };
 
-export const useChatSelection = create<ChatSelectionState>((set) => ({
-  activeChatId: null,
-  busy: false,
-  select: (chatId) => set({ activeChatId: chatId }),
-  setBusy: (busy) => set({ busy }),
-}));
+export const useChatSelection = create<ChatSelectionState>()(
+  persist(
+    (set) => ({
+      activeChatId: null,
+      busy: false,
+      select: (chatId) => set({ activeChatId: chatId }),
+      setBusy: (busy) => set({ busy }),
+    }),
+    {
+      name: "dana.chatSelection",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ activeChatId: state.activeChatId }),
+      skipHydration: true,
+    },
+  ),
+);
