@@ -1,2 +1,10 @@
 .env
+*/.env
 local.settings.json
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+.next/
+models/
+data/
