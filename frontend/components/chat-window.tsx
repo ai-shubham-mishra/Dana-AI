@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench } from "lucide-react";
+import { ArrowDown, BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench } from "lucide-react";
 
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
@@ -263,6 +263,8 @@ function Composer({
   );
 }
 
+const BOTTOM_THRESHOLD_PX = 80;
+
 function ChatThread({
   chatId,
   runs,
@@ -283,7 +285,9 @@ function ChatThread({
   const live = runs.some((run) => !run.done);
   const pendingApproval = live ? null : (pending.data ?? null);
   const pendingId = pendingApproval?.interrupt_id ?? null;
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
   const firstBase = runs[0]?.baseCount;
   const history = firstBase === undefined ? messages.data : messages.data?.slice(0, firstBase);
   const latest = runs[runs.length - 1];
@@ -293,12 +297,34 @@ function ChatThread({
   const latestSteps = (latest?.tools.length ?? 0) + (latest?.todos.length ?? 0);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [historyCount, runs.length, latestText, latestSteps, pendingId]);
 
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD_PX;
+    stickRef.current = atBottom;
+    setShowJump(!atBottom);
+  }
+
+  function jumpToBottom() {
+    stickRef.current = true;
+    setShowJump(false);
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  function sendAndFollow(content: string): Promise<boolean> {
+    stickRef.current = true;
+    setShowJump(false);
+    return onSend(content);
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
           {messages.isPending && <p className="text-sm text-muted-foreground">Loading conversation…</p>}
           {messages.error && <p className="text-sm text-destructive">{messages.error.message}</p>}
@@ -322,16 +348,25 @@ function ChatThread({
               onSubmit={(decisions) => void onResume(decisions)}
             />
           )}
-          <div ref={bottomRef} />
         </div>
       </div>
+      {showJump && (
+        <button
+          type="button"
+          onClick={jumpToBottom}
+          className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-primary shadow-elevated transition-colors hover:bg-magenta-wash"
+        >
+          <ArrowDown className="size-3.5" />
+          Back to bottom
+        </button>
+      )}
       <div className="border-t border-border px-6 py-4">
         <div className="mx-auto w-full max-w-3xl">
           <ErrorBanner message={error} />
           <Composer
             disabled={disabled || Boolean(pendingApproval)}
             placeholder={pendingApproval ? "Respond to the request above to continue" : "Message Dana…"}
-            onSend={onSend}
+            onSend={sendAndFollow}
           />
         </div>
       </div>
