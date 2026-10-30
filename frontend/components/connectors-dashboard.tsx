@@ -3,6 +3,7 @@
 import { ChevronLeft, ChevronRight, Database, Table2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { KeyValueBoxes } from "@/components/key-value";
 import { useAccessToken } from "@/lib/auth";
 import { useConnectorRows, useConnectors } from "@/lib/queries";
 import type { ConnectorPage, ConnectorSummary } from "@/lib/types";
@@ -16,7 +17,6 @@ function formatCount(value: number | null) {
 
 function formatCell(value: unknown): string {
   if (value === null || value === undefined) return "—";
-  if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
 
@@ -80,11 +80,20 @@ function RowsTable({ data }: { data: ConnectorPage }) {
           ) : (
             data.rows.map((row, rowIndex) => (
               <tr key={`${data.page}-${rowIndex}`} className="border-b border-border last:border-0 hover:bg-muted/50">
-                {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} className="max-w-xs truncate whitespace-nowrap px-5 py-3 text-muted-foreground">
-                    {formatCell(cell)}
-                  </td>
-                ))}
+                {row.map((cell, cellIndex) => {
+                  const nested = cell !== null && typeof cell === "object";
+                  return (
+                    <td
+                      key={cellIndex}
+                      className={cn(
+                        "px-5 py-3 align-top text-muted-foreground",
+                        nested ? "min-w-48" : "max-w-xs truncate whitespace-nowrap",
+                      )}
+                    >
+                      {nested ? <KeyValueBoxes data={cell} /> : formatCell(cell)}
+                    </td>
+                  );
+                })}
               </tr>
             ))
           )}
