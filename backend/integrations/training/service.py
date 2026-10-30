@@ -262,7 +262,14 @@ class TrainingService:
                 config = build_config(plan)
                 script = render_script(config, plan.to_dict(), _now().isoformat())
                 run_dir = self._settings.training_output_dir / job_id
-                write_inputs(run_dir, dataset.columns, dataset.rows, dump_config(config), script)
+                write_inputs(
+                    run_dir,
+                    dataset.columns,
+                    dataset.rows,
+                    dump_config(config),
+                    script,
+                    {"plan": plan.to_dict(), "dataset": dataset.log},
+                )
                 message = f"Run folder ready with {len(dataset.rows)} rows and the generated training script"
                 await self._progress(job_id, org_id, user_id,
                                      {"stage": "run_folder", "percent": 5, "message": message})

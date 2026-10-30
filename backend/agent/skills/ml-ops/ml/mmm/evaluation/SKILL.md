@@ -9,7 +9,7 @@ Every run writes `evaluation.json` into its run folder. Read it before reporting
 
 ## Fields
 
-- `status`: `success` when sampling finished and all five run files exist.
+- `status`: `success` when sampling finished and all six run files exist.
 - `rows`, `date_start`, `date_end`: the training window the model was fit on, after aggregation. With a holdout these exclude the held-out rows.
 - `validation`: the split. `holdout_periods` is the number of held-out rows, and `train_rows`, `train_start`, `train_end`, `holdout_rows`, `holdout_start`, `holdout_end` give the two windows. `holdout_rows` is 0 when `holdout_periods` is 0.
 - `channels`, `controls`: what the model used.

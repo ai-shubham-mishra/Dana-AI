@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import Field, ValidationError
 
 from agent.tools.base import BaseTool, ToolInput, ToolOutput
-from integrations.training.mmm.plan import MMMPlan, PlanError, SourceSpec
+from integrations.training.mmm.plan import MMMPlan, PlanError, PreparationSpec, SourceSpec
 from integrations.training.scope import current_scope
 
 START_MMM_RUN_TOOL = "start_mmm_run"
@@ -26,11 +26,32 @@ class StartMmmRunInput(ToolInput):
     )
     date_start: date = Field(description="First date of the training window, YYYY-MM-DD.")
     date_end: date = Field(description="Last date of the training window, YYYY-MM-DD.")
+    preparation: PreparationSpec = Field(
+        default_factory=PreparationSpec,
+        description="Data preparation after profiling: text_to_numeric outputs, date_features, holiday_country, lags and rolling_means. Leave empty when the source columns are already clean numbers.",
+    )
     overrides: dict[str, Any] = Field(
         default_factory=dict,
         description="Optional whitelisted config overrides: adstock_l_max, yearly_seasonality, time_varying_intercept, chains, tune, draws, holdout_periods.",
     )
     rationale: str = Field(default="", description="Short data-scientist reasoning for these choices, shown to the user on approval.")
+
+
+def _preparation_text(preparation: Any) -> str:
+    if not isinstance(preparation, dict) or not any(preparation.values()):
+        return "none (source columns used as they are)"
+    parts = []
+    if preparation.get("text_to_numeric"):
+        parts.append(f"read as numbers: {', '.join(preparation['text_to_numeric'])}")
+    if preparation.get("date_features"):
+        parts.append(f"date features: {', '.join(preparation['date_features'])}")
+    if preparation.get("holiday_country"):
+        parts.append(f"holidays: {preparation['holiday_country']}")
+    for name, lags in (preparation.get("lags") or {}).items():
+        parts.append(f"{name} lags {lags}")
+    for name, window in (preparation.get("rolling_means") or {}).items():
+        parts.append(f"{name} rolling mean {window}d")
+    return "; ".join(parts)
 
 
 def _scope_text(sources: Any) -> str:
@@ -53,7 +74,7 @@ class StartMmmRunTool(BaseTool):
         "generated for this run. A human must approve, edit, or reject the plan before this runs."
     )
     allowed_decisions = ["approve", "edit", "reject"]
-    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}?"
+    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}, preparation {preparation}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return StartMmmRunInput
@@ -63,6 +84,7 @@ class StartMmmRunTool(BaseTool):
         if not values.get("controls"):
             values["controls"] = f"none ({values.get('controls_reason') or 'no reason given'})"
         values["scope"] = _scope_text(values.get("sources"))
+        values["preparation"] = _preparation_text(values.get("preparation"))
         return super().approval_text(values)
 
     async def execute(self, **kwargs: Any) -> ToolOutput:

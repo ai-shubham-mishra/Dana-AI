@@ -3,6 +3,7 @@ from agent.tools.ml_ops.chores.check_last_model_run import CheckLastModelRunTool
 from agent.tools.ml_ops.chores.check_latest_model import CheckLatestModelTool
 from agent.tools.ml_ops.ml.data_prep.create_evaluators import CreateEvaluatorsTool
 from agent.tools.ml_ops.ml.data_prep.list_channels import ListChannelsTool
+from agent.tools.ml_ops.ml.data_prep.preview_mmm_dataset import PreviewMmmDatasetTool
 from agent.tools.ml_ops.ml.data_prep.prepare_training_data import PrepareTrainingDataTool
 from agent.tools.ml_ops.ml.data_prep.update_training_data import UpdateTrainingDataTool
 from agent.tools.ml_ops.ml.training.check_job_status import CheckJobStatusTool
@@ -20,6 +21,7 @@ from agent.tools.system_ops.connectors.find_connector_columns import FindConnect
 from agent.tools.system_ops.connectors.list_channels_within_connector import ListChannelsWithinConnectorTool
 from agent.tools.system_ops.connectors.list_connector_column_values import ListConnectorColumnValuesTool
 from agent.tools.system_ops.connectors.list_connectors import ListConnectorsTool
+from agent.tools.system_ops.connectors.profile_connector_columns import ProfileConnectorColumnsTool
 from agent.tools.system_ops.hitl.ask_user import AskUserTool
 from agent.tools.system_ops.utilities.calculate import CalculateTool
 
@@ -55,6 +57,8 @@ def build_tools(connector_pool=None, datasets_schema: str = "datasets") -> list:
         ListChannelsWithinConnectorTool(**connector_kwargs),
         ListConnectorColumnValuesTool(**connector_kwargs),
         FindConnectorColumnsTool(**connector_kwargs),
+        ProfileConnectorColumnsTool(**connector_kwargs),
+        PreviewMmmDatasetTool(**connector_kwargs),
         ListChannelsTool(**connector_kwargs),
         QueryDatabaseTool(**connector_kwargs),
     ]
