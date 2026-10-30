@@ -20,7 +20,7 @@ from integrations.training.mmm.request import (
     validate_request,
 )
 from integrations.training.mmm.run_folder import RUN_FILES, missing_outputs, write_inputs
-from integrations.training.mmm.sandbox import SandboxError, run_script, sandbox_env
+from integrations.training.mmm.sandbox import STREAM_LINE_LIMIT, SandboxError, run_script, sandbox_env
 from integrations.training.protocol import parse_line
 
 logger = logging.getLogger(__name__)
@@ -220,6 +220,7 @@ class TrainingService:
                     cwd=str(BACKEND_ROOT),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    limit=STREAM_LINE_LIMIT,
                 )
                 tail: deque[str] = deque(maxlen=STDERR_TAIL)
                 drain = asyncio.create_task(_drain(proc.stderr, tail))

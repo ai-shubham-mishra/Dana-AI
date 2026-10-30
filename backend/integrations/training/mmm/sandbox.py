@@ -18,6 +18,8 @@ from integrations.training.protocol import parse_line
 SANDBOX_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
 MAX_RUNTIME_S = 4 * 60 * 60
 STDERR_TAIL = 20
+# The final @@result line carries the full metrics payload on one line, which can exceed asyncio's 64 KiB default.
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
 
 ProgressHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -61,6 +63,7 @@ async def run_script(
         env=env if env is not None else sandbox_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=STREAM_LINE_LIMIT,
     )
     tail: deque[str] = deque(maxlen=STDERR_TAIL)
     drain = asyncio.create_task(_drain(proc.stderr, tail))
