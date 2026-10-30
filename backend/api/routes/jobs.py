@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from integrations.auth.dependencies import Principal, get_principal
 
@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/v1")
 
 LIST_LIMIT = 50
 EVENT_LIMIT = 200
+DELETE_LIMIT = 100
 SUMMARY_FIELDS = {
     "_id": 0,
     "id": 1,
@@ -55,6 +56,33 @@ class JobDetail(JobSummary):
     metrics: dict[str, Any] | None = None
     artifact: JobArtifact | None = None
     events: list[JobEvent] = []
+
+
+class DeleteJobsRequest(BaseModel):
+    job_ids: list[str] = Field(min_length=1, max_length=DELETE_LIMIT)
+
+
+class SkippedJob(BaseModel):
+    id: str
+    reason: str
+
+
+class DeleteJobsResult(BaseModel):
+    deleted: list[str]
+    skipped: list[SkippedJob]
+
+
+@router.post("/jobs/delete", response_model=DeleteJobsResult)
+async def delete_jobs(
+    body: DeleteJobsRequest,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> DeleteJobsResult:
+    job_ids = list(dict.fromkeys(body.job_ids))
+    result = await request.app.state.training.delete_jobs(
+        org_id=principal.org_id, user_id=principal.user_id, job_ids=job_ids
+    )
+    return DeleteJobsResult(**result)
 
 
 @router.get("/jobs", response_model=list[JobSummary])
