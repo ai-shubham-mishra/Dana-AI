@@ -98,5 +98,6 @@ export type JobDetail = JobSummary & {
   params: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   artifact: JobArtifact | null;
+  artifacts: JobArtifact[];
   events: JobEvent[];
 };
