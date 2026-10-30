@@ -236,6 +236,18 @@ def test_source_filters_reject_bad_identifiers_and_values():
         SourceSpec(table="sales_daily", date_column="date", metrics={"revenue": "revenue"}, filters={"country": "x" * 101})
 
 
+def test_source_identifiers_accept_hyphens_as_in_connector_columns():
+    spec = SourceSpec(
+        table="google-ads",
+        date_column="date",
+        metrics={"spend": "GAds-Demand-Gen_spend"},
+        filters={"market-code": "DE"},
+    )
+    assert spec.metrics == {"spend": "GAds-Demand-Gen_spend"}
+    with pytest.raises(ValidationError, match="not a valid connector table or column name"):
+        SourceSpec(table="google ads", date_column="date", metrics={"spend": "spend"})
+
+
 def scoped_columns() -> dict[str, list[dict[str, str]]]:
     columns = good_columns()
     columns["sales_daily"] = columns["sales_daily"] + [column("country", "text")]
