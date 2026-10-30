@@ -157,9 +157,11 @@ function AssistantTurn({ parts }: { parts: TurnPart[] }) {
   const hasProcess = parts.some(
     (part) => part.tools.some((tool) => !HIDDEN_TOOLS.has(tool.name)) || part.todos.length > 0 || part.thinking,
   );
+  const plan = [...parts].reverse().find((part) => part.todos.length > 0)?.todos ?? [];
   return (
     <div className="min-w-0 space-y-3">
       <ThinkingBlock live={live} status={status} hasContent={hasProcess} defaultOpen={parts.some((part) => part.streamed)}>
+        {plan.length > 0 && <TodoPanel todos={plan} live={live} />}
         {parts.map((part) => {
           const tools = part.tools.filter((tool) => !HIDDEN_TOOLS.has(tool.name));
           return (
@@ -178,7 +180,6 @@ function AssistantTurn({ parts }: { parts: TurnPart[] }) {
                   ))}
                 </ul>
               )}
-              {part.todos.length > 0 && <TodoPanel todos={part.todos} live={part.live} />}
               {part.thinking &&
                 (part.live ? (
                   <ReasoningTicker text={part.thinking} />
