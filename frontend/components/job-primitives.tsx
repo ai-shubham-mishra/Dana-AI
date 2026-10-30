@@ -20,7 +20,7 @@ export function JobProgressBar({ percent, status, className }: { percent: number
     >
       <motion.div
         className={cn("absolute inset-y-0 left-0 overflow-hidden rounded-full transition-colors duration-500", progressTone(status, value))}
-        style={isActive(status) ? { backgroundImage: "linear-gradient(90deg, var(--brand-purple), var(--primary))" } : undefined}
+        style={isActive(status) ? { backgroundImage: "linear-gradient(90deg, var(--background), var(--primary))" } : undefined}
         initial={false}
         animate={{ width: `${value}%` }}
         transition={{ type: "spring", stiffness: 120, damping: 24 }}
