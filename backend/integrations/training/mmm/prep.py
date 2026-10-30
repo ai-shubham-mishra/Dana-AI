@@ -58,6 +58,8 @@ def build_rows(
             if values.get(name) is None:
                 blanks[name] += 1
             record[name] = _value(by_day, day, name)
+        for group, members in spec.combine_channels.items():
+            record[group] = sum(_value(by_day, day, member) for member in members)
         record.update(_calendar_features(day, spec))
         if holiday_calendar is not None:
             record[HOLIDAY_FEATURE] = int(day in holiday_calendar)
@@ -74,5 +76,6 @@ def build_rows(
         "blanks_filled": blanks,
         "history_days": spec.history_days(),
         "features": spec.feature_names(),
+        "combined": spec.combine_channels,
     }
     return rows, log

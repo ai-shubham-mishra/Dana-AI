@@ -58,6 +58,11 @@ class PreviewMmmDatasetTool(ConnectorTool):
             + (", ".join(f"{name} {count}" for name, count in log["blanks_filled"].items()) or "none")
             + ".",
             f"History read before the window: {log['history_days']} days.",
+            *(
+                ["Combined channels: " + "; ".join(f"{group} = {' + '.join(members)}" for group, members in log["combined"].items()) + "."]
+                if log["combined"]
+                else []
+            ),
             "First rows:",
             *[f"- {_format_row(row)}" for row in head],
         ]
