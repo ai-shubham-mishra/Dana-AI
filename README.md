@@ -55,7 +55,7 @@ Frontend styling follows the analytics-studio branding.
      --reload-dir integrations --reload-dir middlewares
    ```
 
-   `--reload-dir` limits auto-reload to source packages. Without it, uvicorn also watches `backend/var/`, so writing a run's `train.py` restarts the server and cancels the training job in flight.
+   Training run folders live in `~/.dana-ai/training/<job_id>/` by default (override with `TRAINING_OUTPUT_DIR`), outside `backend/`. Uvicorn's reloader watches every `*.py` under `backend/`, so a run's `train.py` written inside the repo would restart the server and cancel the job in flight. `--reload-dir` still limits reloads to source packages.
 
 3. Frontend (in a second terminal):
 
@@ -128,7 +128,7 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - On success, the model (`mmm_model.nc`) is uploaded to Azurite at `models/{org_id}/{user_id}/{job_id}/mmm_model.nc`. The job stores the artifact name and size. The blob path is not exposed through the API. On failure, the job stores the error and the last stderr lines.
 - `GET /api/v1/jobs` lists your jobs. `GET /api/v1/jobs/{id}` returns parameters, metrics, the artifact, and the event timeline. Other tenants get 404.
 - The Jobs tab shows a progress bar for each job. Click a row to open its details.
-- A full default run (4 chains, 2000 tuning steps) is slow. The tests use small budgets. To run the trainer by hand: `cd backend && PYTHONPATH=. ./.venv/bin/python -m integrations.training.mmm.cli --data resources/training/mmm/mmm_demo.csv --config resources/training/mmm/mmm_demo.yaml --output-dir var/training/manual --chains 2 --tune 200 --draws 200`.
+- A full default run (4 chains, 2000 tuning steps) is slow. The tests use small budgets. To run the trainer by hand: `cd backend && PYTHONPATH=. ./.venv/bin/python -m integrations.training.mmm.cli --data resources/training/mmm/mmm_demo.csv --config resources/training/mmm/mmm_demo.yaml --output-dir ~/.dana-ai/training/manual --chains 2 --tune 200 --draws 200`.
 
 ## Git workflow
 
