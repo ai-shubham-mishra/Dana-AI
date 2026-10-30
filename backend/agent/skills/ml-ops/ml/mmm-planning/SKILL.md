@@ -1,33 +1,25 @@
 ---
 name: mmm-planning
-description: Plan and start a Marketing Mix Model training run - collect the inputs, map them to the bundled dataset, then request training for approval.
+description: Plan and start a Marketing Mix Model training run on the org's connector data - collect the KPI and channels, map them to connector tables, resolve dates, then request approval through start_mmm_run.
 ---
 
 # MMM planning and training
 
-Use this skill when the user wants to build, run, or understand a Marketing Mix Model.
+Use this skill when the user wants to build, run, or understand a Marketing Mix Model on their own data. Follow the `mmm` skill for the full recipe (data strategy, config, script, evaluation, run folder).
 
 ## Steps
 
 1. Confirm the business KPI (for example revenue, conversions, or sign-ups) and its currency.
 2. Ask which marketing channels to model (for example Meta Ads, Google Ads, TV, email).
-3. Resolve the date range of the historical data without asking: call `get_current_date`, then `resolve_date_range` with the user's phrase (for example "last 12 months"). Use the result in the form `YYYY-MM-DD to YYYY-MM-DD`. Ask for dates only if `resolve_date_range` returns an error.
-4. Ask which connector or data source holds each channel's spend and the KPI.
-5. Summarize the inputs in a short list and confirm them before proposing next steps.
-6. When the user asks to train, call `start_training_job` with `model="mmm"`, the KPI, the channels, and the resolved date range. A human approves, edits, or rejects the request first.
-
-## Bundled dataset (for now)
-
-Training runs only on the bundled sample dataset until client connectors are available.
-
-- KPI: `sales`
-- Channels: `Google-Demand-Gen`, `Google-PMax`, `Google-Search`, `YouTube`, `Meta-ASC`, `Meta-Reach`, `Meta-Performance`, `TV`, `Microsoft`, `Pinterest`
-- Data starts on 2023-04-24 (weekly rows).
-
-If the user asks for a KPI or channel outside this list, say so and do not submit the request. Ask the user to choose from the list, or wait for connectors.
+3. Resolve the date range without asking: call `get_current_date`, then `resolve_date_range` with the user's phrase (for example "last 12 months"). Ask for dates only if `resolve_date_range` returns an error.
+4. Discover the data with `list_connectors`, then `list_channels_within_connector` for each connector the user names. Map each KPI, channel, and control to a connector table, date column, and metric column. Do not guess names.
+5. Follow `mmm-data-strategy` to check coverage, grain, and gaps. Summarize the inputs and your reasoning in a short list, then confirm with the user.
+6. When the user asks to train, call `start_mmm_run` with the mapped `kpi`, `channels`, `controls`, `sources`, `date_start`, `date_end`, any whitelisted `overrides`, and a short `rationale`. A human approves, edits, or rejects the plan first.
+7. After submission, tell the user the run folder holds the dataset, config, training script, evaluation, and model, and that progress is on the Jobs tab.
 
 ## Boundaries
 
-- Do not claim any results before a job has succeeded. Point the user to the Jobs tab for progress and output.
+- Do not claim any results before a run has succeeded. Point the user to the Jobs tab for progress and output.
 - Do not guess column names or values. Ask the user.
-- Do not submit a training request until the KPI and channels are confirmed and a date range has been resolved.
+- Do not call `start_mmm_run` until the KPI and channels are confirmed and a date range has been resolved.
+- The legacy `start_training_job` tool only trains on the bundled sample dataset. Use `start_mmm_run` for client data.

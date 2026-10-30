@@ -142,3 +142,40 @@ async def count_org_rows(pool: AsyncConnectionPool, schema: str, table: str, org
         await cur.execute(query, (org_id,))
         row = await cur.fetchone()
     return int(row["total"])
+
+
+async def get_daily_metric_rows(
+    pool: AsyncConnectionPool,
+    schema: str,
+    table: str,
+    org_id: str,
+    date_column: str,
+    metric_columns: list[str],
+    start: date,
+    end: date,
+) -> list[dict[str, Any]]:
+    relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
+    day = sql.SQL("CAST({} AS date)").format(sql.Identifier(date_column))
+    aggregates = [
+        sql.SQL("SUM({}) AS {}").format(sql.Identifier(column), sql.Identifier(f"_m{index}"))
+        for index, column in enumerate(metric_columns)
+    ]
+    query = sql.SQL(
+        "SELECT {day} AS _day, {aggregates} FROM {relation} "
+        "WHERE {org}::text = %s AND {day} BETWEEN %s AND %s GROUP BY 1 ORDER BY 1"
+    ).format(
+        day=day,
+        aggregates=sql.SQL(", ").join(aggregates),
+        relation=relation,
+        org=sql.Identifier(ORG_COLUMN),
+    )
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, (org_id, start, end))
+        rows = await cur.fetchall()
+    return [
+        {
+            "date": row["_day"],
+            "values": [row[f"_m{index}"] for index in range(len(metric_columns))],
+        }
+        for row in rows
+    ]

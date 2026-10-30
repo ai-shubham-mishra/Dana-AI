@@ -1,0 +1,42 @@
+# Default MMM configuration. The recipe loader reads this file; override only what the data justifies.
+# Keys under `overrides` in a run request must be listed in config-reference/SKILL.md.
+model:
+  adstock:
+    l_max: 10
+  time_varying_intercept: false
+  yearly_seasonality: 2
+  priors:
+    intercept:
+      distribution: HalfNormal
+      sigma: 0.5
+    saturation_beta:
+      distribution: HalfNormal
+    saturation_lam:
+      distribution: Gamma
+      alpha: 3
+      beta: 1
+    adstock_alpha:
+      distribution: Beta
+      alpha: 1
+      beta: 3
+    gamma_control:
+      distribution: Normal
+      mu: 0
+      sigma: 0.05
+    gamma_fourier:
+      distribution: Laplace
+      mu: 0
+      b: 0.1
+    likelihood:
+      distribution: TruncatedNormal
+      lower: 0
+      sigma:
+        distribution: HalfNormal
+        sigma: 1
+sampling:
+  chains: 4
+  tune: 2000
+  target_accept: 0.95
+  random_seed: 123
+validation:
+  holdout_periods: 8

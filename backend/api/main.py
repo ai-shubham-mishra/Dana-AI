@@ -63,7 +63,12 @@ def create_app(
         app.state.agent_lock = asyncio.Lock()
         app.state.active_chats = set()
         app.state.training = TrainingService(
-            db=db, blob=blob, settings=settings, command_factory=training_command_factory
+            db=db,
+            blob=blob,
+            settings=settings,
+            command_factory=training_command_factory,
+            connector_pool=app.state.connector_pool,
+            datasets_schema=settings.datasets_schema,
         )
         try:
             yield
