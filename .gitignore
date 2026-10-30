@@ -12,3 +12,8 @@ data/
 backend/resources/
 backend/var/
 /var/
+*/*.nc
+*.pyc
+demos
+*.DS_Store
+*/*.DS_Store
