@@ -117,7 +117,7 @@ function UserBubble({ content }: { content: string }) {
   );
 }
 
-function TodoPanel({ todos }: { todos: TodoItem[] }) {
+function TodoPanel({ todos, live }: { todos: TodoItem[]; live: boolean }) {
   return (
     <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Plan</p>
@@ -130,7 +130,7 @@ function TodoPanel({ todos }: { todos: TodoItem[] }) {
               {done ? (
                 <CircleCheck className="mt-0.5 size-4 shrink-0 text-primary" />
               ) : inProgress ? (
-                <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+                <Loader2 className={`mt-0.5 size-4 shrink-0 text-primary ${live ? "animate-spin" : ""}`} />
               ) : (
                 <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               )}
@@ -178,7 +178,7 @@ function AssistantTurn({ parts }: { parts: TurnPart[] }) {
                   ))}
                 </ul>
               )}
-              {part.todos.length > 0 && <TodoPanel todos={part.todos} />}
+              {part.todos.length > 0 && <TodoPanel todos={part.todos} live={part.live} />}
               {part.thinking &&
                 (part.live ? (
                   <ReasoningTicker text={part.thinking} />
@@ -422,6 +422,8 @@ export function ChatWindow() {
     let target = chatId;
     let runChatId: string | null = null;
     let streamed = false;
+    let interrupted = false;
+    let settled = false;
     const patch = (chat: string, update: (run: RunState) => RunState) =>
       setRuns((prev) => ({
         ...prev,
@@ -469,8 +471,12 @@ export function ChatWindow() {
             boundary: current.text.length,
             tools: current.tools.map((tool) => (tool.id === id ? { ...tool, done: true } : tool)),
           })),
-        onInterrupt: (pending) => queryClient.setQueryData(["pending", token, chat], pending),
+        onInterrupt: (pending) => {
+          interrupted = true;
+          queryClient.setQueryData(["pending", token, chat], pending);
+        },
       });
+      settled = true;
       return true;
     } catch (err) {
       if (controller.signal.aborted) return true;
@@ -482,9 +488,22 @@ export function ChatWindow() {
         await queryClient.invalidateQueries({ queryKey: ["messages", token, finished] });
         await queryClient.invalidateQueries({ queryKey: ["pending", token, finished] });
         await queryClient.invalidateQueries({ queryKey: ["chats", token] });
+        const completedCleanly = settled && !interrupted;
         setRuns((prev) => ({
           ...prev,
-          [finished]: (prev[finished] ?? []).map((run) => (run.id === runId ? { ...run, done: true } : run)),
+          [finished]: (prev[finished] ?? []).map((run) =>
+            run.id === runId
+              ? {
+                  ...run,
+                  done: true,
+                  todos: completedCleanly
+                    ? run.todos.map((todo) =>
+                        todo.status === "in_progress" ? { ...todo, status: "completed" } : todo,
+                      )
+                    : run.todos,
+                }
+              : run,
+          ),
         }));
       }
       abortRef.current = null;
