@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     agent_root: Path = BACKEND_ROOT / "agent"
 
     # Outside backend/ so uvicorn --reload never sees run-folder writes.
-    training_output_dir: Path = Path.home() / ".dana-ai" / "training"
+    training_output_dir: Path = BACKEND_ROOT.parent / "var" / "training"
     training_mmm_dir: Path = BACKEND_ROOT / "resources" / "training" / "mmm"
 
 

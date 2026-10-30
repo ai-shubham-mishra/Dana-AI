@@ -54,6 +54,7 @@ class JobDetail(JobSummary):
     params: dict[str, Any] | None = None
     metrics: dict[str, Any] | None = None
     artifact: JobArtifact | None = None
+    artifacts: list[JobArtifact] = []
     events: list[JobEvent] = []
 
 
@@ -92,4 +93,6 @@ async def get_job(
         .limit(EVENT_LIMIT)
     )
     events = [JobEvent(**event) async for event in events_cursor]
-    return JobDetail(**doc, events=events)
+    files = (doc.get("artifact") or {}).get("files") or []
+    artifacts = [JobArtifact(**item) for item in files if isinstance(item, dict)]
+    return JobDetail(**doc, events=events, artifacts=artifacts)

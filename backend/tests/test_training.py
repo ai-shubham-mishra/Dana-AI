@@ -17,8 +17,9 @@ MMM_DIR = BACKEND_ROOT / "resources" / "training" / "mmm"
 SPEC = load_dataset_spec(MMM_DIR / "mmm_demo.yaml")
 
 
-def test_default_run_folder_is_outside_reload_watched_tree():
+def test_default_run_folder_is_repo_var_training_outside_reload_watched_tree():
     default = Settings.model_fields["training_output_dir"].default
+    assert default == BACKEND_ROOT.parent / "var" / "training"
     assert not default.is_relative_to(BACKEND_ROOT)
 
 FAKE_TRAINER = """
@@ -113,6 +114,7 @@ def test_successful_job_records_progress_metrics_and_artifact(raw_db, member, tm
         assert body["percent"] == 100
         assert body["metrics"]["divergences"] == 0
         assert body["artifact"] == {"name": "mmm_model.nc", "bytes": len(b"fake-model")}
+        assert body["artifacts"] == [{"name": "mmm_model.nc", "bytes": len(b"fake-model")}]
         assert "blob_path" not in json.dumps(body)
         assert [e["stage"] for e in body["events"]][-1] == "done"
 

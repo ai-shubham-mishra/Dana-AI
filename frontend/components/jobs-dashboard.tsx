@@ -236,11 +236,16 @@ function JobBlade({
               </CollapsibleSection>
             ) : null}
 
-            {detail.artifact ? (
-              <CollapsibleSection title="Artifact" defaultOpen={false}>
-                <p className="text-sm">
-                  {detail.artifact.name} <span className="text-muted-foreground">({formatBytes(detail.artifact.bytes)})</span>
-                </p>
+            {detail.artifacts.length > 0 ? (
+              <CollapsibleSection title="Artifacts" count={detail.artifacts.length} defaultOpen={false}>
+                <ul className="divide-y divide-border text-sm">
+                  {detail.artifacts.map((file) => (
+                    <li key={file.name} className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="truncate font-mono text-xs">{file.name}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatBytes(file.bytes)}</span>
+                    </li>
+                  ))}
+                </ul>
               </CollapsibleSection>
             ) : null}
           </div>

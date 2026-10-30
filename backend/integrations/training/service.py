@@ -19,7 +19,7 @@ from integrations.training.mmm.request import (
     load_dataset_spec,
     validate_request,
 )
-from integrations.training.mmm.run_folder import RUN_FILES, missing_outputs, write_inputs
+from integrations.training.mmm.run_folder import missing_outputs, run_file_sizes, write_inputs
 from integrations.training.mmm.sandbox import STREAM_LINE_LIMIT, SandboxError, run_script, sandbox_env
 from integrations.training.protocol import parse_line
 
@@ -296,10 +296,7 @@ class TrainingService:
                                      f"run folder is missing: {', '.join(missing)}")
                     return
                 result = {**result, "model_path": str(run_dir / MODEL_FILE)}
-                await self._finish(job_id, org_id, user_id, result, extra={
-                    "run_dir": str(run_dir),
-                    "files": list(RUN_FILES),
-                })
+                await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)})
             except asyncio.CancelledError:
                 try:
                     await self._fail(job_id, org_id, user_id, "Training was interrupted by a server shutdown")
@@ -339,6 +336,7 @@ class TrainingService:
             "blob_container": self._settings.blob_container,
             "blob_path": blob_path,
             "bytes": len(data),
+            "files": run_file_sizes(Path(result["model_path"]).parent),
             **(extra or {}),
         }
         message = "Model trained and saved"

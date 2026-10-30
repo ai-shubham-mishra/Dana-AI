@@ -36,3 +36,11 @@ def write_inputs(
 
 def missing_outputs(run_dir: Path) -> list[str]:
     return [name for name in RUN_FILES if not (run_dir / name).is_file() or (run_dir / name).stat().st_size == 0]
+
+
+def run_file_sizes(run_dir: Path) -> list[dict[str, Any]]:
+    return [
+        {"name": name, "bytes": (run_dir / name).stat().st_size}
+        for name in RUN_FILES
+        if (run_dir / name).is_file()
+    ]
