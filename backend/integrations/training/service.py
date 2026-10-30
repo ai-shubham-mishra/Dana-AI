@@ -10,12 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from config.settings import BACKEND_ROOT, Settings
+from integrations.training.mmm.dataset import build_dataset, validate_sources
+from integrations.training.mmm.plan import MMMPlan, PlanError
+from integrations.training.mmm.recipe import build_config, dump_config, render_script
 from integrations.training.mmm.request import (
     DatasetSpec,
     MMMRequest,
     load_dataset_spec,
     validate_request,
 )
+from integrations.training.mmm.run_folder import RUN_FILES, missing_outputs, write_inputs
+from integrations.training.mmm.sandbox import SandboxError, run_script, sandbox_env
 from integrations.training.protocol import parse_line
 
 logger = logging.getLogger(__name__)
@@ -53,6 +58,10 @@ def _title(request: MMMRequest) -> str:
     return f"MMM training · {request.kpi} · {request.date_start} to {request.date_end}"
 
 
+def _plan_title(plan: MMMPlan) -> str:
+    return f"MMM training · {plan.kpi} · {plan.date_start} to {plan.date_end}"
+
+
 async def _drain(stream: asyncio.StreamReader, tail: deque[str]) -> None:
     async for raw in stream:
         line = raw.decode("utf-8", "replace").rstrip()
@@ -68,6 +77,8 @@ class TrainingService:
         blob: Any,
         settings: Settings,
         command_factory: CommandFactory | None = None,
+        connector_pool: Any | None = None,
+        datasets_schema: str = "datasets",
     ):
         self._db = db
         self._blob = blob
@@ -76,8 +87,42 @@ class TrainingService:
         self._config_path = settings.training_mmm_dir / MMM_CONFIG_FILE
         self._spec: DatasetSpec = load_dataset_spec(self._config_path)
         self._command_factory = command_factory or self._mmm_command
+        self._connector_pool = connector_pool
+        self._datasets_schema = datasets_schema
         self._slots = asyncio.Semaphore(1)
         self._tasks: set[asyncio.Task] = set()
+
+    async def submit_mmm_plan(self, *, org_id: str, user_id: str, chat_id: str, plan: MMMPlan) -> str:
+        if self._connector_pool is None:
+            raise PlanError("connector data is not configured for training")
+        await validate_sources(self._connector_pool, self._datasets_schema, plan)
+        job_id = uuid.uuid4().hex
+        now = _now()
+        await self._db.jobs.insert_one(
+            {
+                "id": job_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "title": _plan_title(plan),
+                "kind": JOB_KIND,
+                "status": "queued",
+                "stage": "queued",
+                "percent": 0,
+                "message": "Waiting for a free training slot",
+                "error": None,
+                "params": plan.to_dict(),
+                "metrics": None,
+                "artifact": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        await self._event(job_id, org_id, user_id, "queued", 0, "Waiting for a free training slot")
+        task = asyncio.create_task(self._run_plan(job_id, org_id, user_id, plan))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job_id
 
     async def submit(
         self,
@@ -208,6 +253,57 @@ class TrainingService:
                 logger.exception("training job %s crashed", job_id)
                 await self._fail(job_id, org_id, user_id, f"Training failed: {type(exc).__name__}")
 
+    async def _run_plan(self, job_id: str, org_id: str, user_id: str, plan: MMMPlan) -> None:
+        async with self._slots:
+            try:
+                await self._update(job_id, status="running", stage="compiling_data", percent=2,
+                                   message="Compiling the dataset from connector tables")
+                dataset = await build_dataset(self._connector_pool, self._datasets_schema, org_id, plan)
+                config = build_config(plan)
+                script = render_script(config, plan.to_dict(), _now().isoformat())
+                run_dir = self._settings.training_output_dir / job_id
+                write_inputs(run_dir, dataset.columns, dataset.rows, dump_config(config), script)
+                message = f"Run folder ready with {len(dataset.rows)} rows and the generated training script"
+                await self._progress(job_id, org_id, user_id,
+                                     {"stage": "run_folder", "percent": 5, "message": message})
+
+                async def on_progress(payload: dict[str, Any]) -> None:
+                    await self._progress(job_id, org_id, user_id, payload)
+
+                outcome = await run_script(
+                    [sys.executable, str(run_dir / "train.py")],
+                    run_dir,
+                    on_progress,
+                    env=sandbox_env(),
+                )
+                result = outcome.result or {}
+                if outcome.code != 0 or result.get("status") != "success":
+                    message = result.get("message") or (outcome.tail[-1] if outcome.tail else "") \
+                        or f"training script exited with code {outcome.code}"
+                    await self._fail(job_id, org_id, user_id, message)
+                    return
+                missing = missing_outputs(run_dir)
+                if missing:
+                    await self._fail(job_id, org_id, user_id,
+                                     f"run folder is missing: {', '.join(missing)}")
+                    return
+                result = {**result, "model_path": str(run_dir / MODEL_FILE)}
+                await self._finish(job_id, org_id, user_id, result, extra={
+                    "run_dir": str(run_dir),
+                    "files": list(RUN_FILES),
+                })
+            except asyncio.CancelledError:
+                try:
+                    await self._fail(job_id, org_id, user_id, "Training was interrupted by a server shutdown")
+                except Exception:
+                    logger.exception("could not record interrupted training job %s", job_id)
+                raise
+            except (PlanError, SandboxError) as exc:
+                await self._fail(job_id, org_id, user_id, str(exc))
+            except Exception as exc:
+                logger.exception("training job %s crashed", job_id)
+                await self._fail(job_id, org_id, user_id, f"Training failed: {type(exc).__name__}")
+
     async def _progress(self, job_id: str, org_id: str, user_id: str, payload: dict[str, Any]) -> None:
         stage = str(payload.get("stage", "running"))
         percent = int(payload.get("percent", 0))
@@ -215,7 +311,14 @@ class TrainingService:
         await self._update(job_id, stage=stage, percent=percent, message=message)
         await self._event(job_id, org_id, user_id, stage, percent, message)
 
-    async def _finish(self, job_id: str, org_id: str, user_id: str, result: dict[str, Any]) -> None:
+    async def _finish(
+        self,
+        job_id: str,
+        org_id: str,
+        user_id: str,
+        result: dict[str, Any],
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         await self._update(job_id, stage="uploading_artifact", percent=97,
                            message="Uploading the model artifact")
         await self._event(job_id, org_id, user_id, "uploading_artifact", 97, "Uploading the model artifact")
@@ -228,6 +331,7 @@ class TrainingService:
             "blob_container": self._settings.blob_container,
             "blob_path": blob_path,
             "bytes": len(data),
+            **(extra or {}),
         }
         message = "Model trained and saved"
         await self._update(job_id, status="succeeded", stage="done", percent=100, message=message,

@@ -1,0 +1,196 @@
+"""Generated MMM training script for one Dana AI run. Regenerate from the plan instead of editing."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+import arviz as az
+import numpy as np
+import pandas as pd
+from pymc_extras.prior import Prior
+from pymc_marketing.mmm import GeometricAdstock, LogisticSaturation, MMM
+
+RUN_DIR = Path(__file__).resolve().parent
+CONFIG = {{CONFIG_LITERAL}}
+PLAN_SUMMARY = {{PLAN_SUMMARY_LITERAL}}
+GENERATED_AT = {{GENERATED_AT_LITERAL}}
+MODEL_FILE = "mmm_model.nc"
+EVALUATION_FILE = "evaluation.json"
+MIN_ROWS = 20
+MIN_CHANNEL_SPEND = 0.01
+RHAT_LIMIT = 1.1
+RHAT_VARIABLES = (
+    "intercept_contribution",
+    "y_sigma",
+    "saturation_beta",
+    "saturation_lam",
+    "adstock_alpha",
+    "gamma_control",
+    "gamma_fourier",
+)
+PROGRESS_PREFIX = "@@progress "
+RESULT_PREFIX = "@@result "
+
+
+def emit(prefix, payload):
+    print(prefix + json.dumps(payload, default=str), flush=True)
+
+
+def progress(stage, percent, message):
+    emit(PROGRESS_PREFIX, {"stage": stage, "percent": percent, "message": message})
+
+
+def prior(spec, **overrides):
+    return Prior(spec["distribution"], **{**{k: v for k, v in spec.items() if k != "distribution"}, **overrides})
+
+
+def model_config(priors, prior_sigma):
+    likelihood = priors["likelihood"]
+    return {
+        "intercept": prior(priors["intercept"]),
+        "saturation_lam": prior(priors["saturation_lam"], dims="channel"),
+        "adstock_alpha": prior(priors["adstock_alpha"], dims="channel"),
+        "gamma_control": prior(priors["gamma_control"], dims="control"),
+        "gamma_fourier": prior(priors["gamma_fourier"]),
+        "saturation_beta": prior(priors["saturation_beta"], sigma=prior_sigma, dims="channel"),
+        "likelihood": Prior(
+            likelihood["distribution"],
+            lower=likelihood["lower"],
+            sigma=Prior(likelihood["sigma"]["distribution"], sigma=likelihood["sigma"]["sigma"]),
+        ),
+    }
+
+
+def fix_object_dtypes(idata):
+    for node in idata.subtree:
+        dataset = node.to_dataset(inherit=False)
+        converted = {
+            name: var.astype(str)
+            for name, var in {**dataset.coords, **dataset.data_vars}.items()
+            if var.dtype == object
+        }
+        if converted:
+            node.update(converted)
+
+
+def load_frame():
+    date_col = CONFIG["date_column"]
+    target = CONFIG["target_column"]
+    frame = pd.read_csv(RUN_DIR / "dataset.csv")
+    if date_col not in frame.columns or target not in frame.columns:
+        raise ValueError(f"dataset must contain '{date_col}' and '{target}' columns")
+    frame[date_col] = pd.to_datetime(frame[date_col])
+    frame = frame.sort_values(date_col).reset_index(drop=True)
+    if len(frame) < MIN_ROWS:
+        raise ValueError(f"need at least {MIN_ROWS} rows, found {len(frame)}")
+    return frame
+
+
+def run():
+    date_col = CONFIG["date_column"]
+    target = CONFIG["target_column"]
+    sampling = CONFIG["sampling"]
+    model_settings = CONFIG["model"]
+
+    progress("loading_data", 5, "Loading the run dataset")
+    frame = load_frame()
+
+    requested = [c for c in CONFIG["channels"] if c in frame.columns]
+    spend = frame[requested].sum(axis=0)
+    excluded = sorted(spend[spend < MIN_CHANNEL_SPEND].index.tolist())
+    channels = sorted(c for c in requested if c not in excluded)
+    if not channels:
+        raise ValueError("no channels with spend in the training window")
+    controls = [c for c in CONFIG["controls"] if c in frame.columns]
+
+    channel_spend = frame[channels].sum(axis=0)
+    prior_sigma = (channel_spend / channel_spend.sum()).to_numpy()
+    X = frame.drop(columns=target)
+    y = frame[target]
+    progress("loading_data", 10, f"Loaded {len(frame)} rows for {len(channels)} channels")
+
+    progress("building_model", 15, f"Building the MMM with {len(channels)} channels")
+    model = MMM(
+        date_column=date_col,
+        channel_columns=channels,
+        target_column=target,
+        control_columns=controls,
+        adstock=GeometricAdstock(l_max=model_settings["adstock"]["l_max"]),
+        saturation=LogisticSaturation(),
+        time_varying_intercept=model_settings["time_varying_intercept"],
+        yearly_seasonality=model_settings["yearly_seasonality"],
+        model_config=model_config(model_settings["priors"], prior_sigma),
+        sampler_config={"progressbar": False},
+    )
+    model.build_model(X, y)
+    model.add_original_scale_contribution_variable(
+        var=[
+            "channel_contribution",
+            "control_contribution",
+            "intercept_contribution",
+            "yearly_seasonality_contribution",
+            "y",
+        ]
+    )
+
+    progress("sampling", 25, f"Sampling {sampling['chains']} chains after {sampling['tune']} tuning steps")
+    extra = {"draws": sampling["draws"]} if "draws" in sampling else {}
+    model.fit(
+        X=X,
+        y=y,
+        chains=sampling["chains"],
+        tune=sampling["tune"],
+        target_accept=sampling["target_accept"],
+        random_seed=np.random.default_rng(sampling["random_seed"]),
+        **extra,
+    )
+
+    divergences = int(model.idata.sample_stats.diverging.sum().item())
+    posterior = model.idata.posterior
+    names = [name for name in RHAT_VARIABLES if name in posterior.data_vars]
+    max_rhat = float(az.summary(data=model.idata, var_names=names)["r_hat"].max())
+    progress("diagnostics", 85, f"{divergences} divergences, max R-hat {max_rhat:.3f}")
+
+    if divergences == 0:
+        progress("posterior_predictive", 90, "Sampling posterior predictive")
+        model.sample_posterior_predictive(X, random_seed=np.random.default_rng(sampling["random_seed"]))
+
+    evaluation = {
+        "status": "success",
+        "plan": PLAN_SUMMARY,
+        "generated_at": GENERATED_AT,
+        "rows": len(frame),
+        "date_start": frame[date_col].min().date().isoformat(),
+        "date_end": frame[date_col].max().date().isoformat(),
+        "channels": channels,
+        "controls": controls,
+        "excluded_channels": excluded,
+        "divergences": divergences,
+        "max_rhat": round(max_rhat, 4),
+        "rhat_limit": RHAT_LIMIT,
+        "rhat_ok": max_rhat <= RHAT_LIMIT,
+    }
+    (RUN_DIR / EVALUATION_FILE).write_text(json.dumps(evaluation, indent=2), encoding="utf-8")
+
+    model_path = RUN_DIR / MODEL_FILE
+    if model_path.exists():
+        os.remove(model_path)
+    fix_object_dtypes(model.idata)
+    model.save(str(model_path))
+    progress("saving_model", 95, "Model saved to the run folder")
+    return {"status": "success", "model_path": MODEL_FILE, "metrics": evaluation}
+
+
+def main():
+    try:
+        result = run()
+    except Exception as exc:
+        emit(RESULT_PREFIX, {"status": "error", "message": f"{type(exc).__name__}: {exc}"})
+        return 1
+    emit(RESULT_PREFIX, result)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

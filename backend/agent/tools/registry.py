@@ -10,6 +10,7 @@ from agent.tools.ml_ops.ml.training.create_ml_training_job import CreateMLTraini
 from agent.tools.ml_ops.ml.training.create_training_script import CreateTrainingScriptTool
 from agent.tools.ml_ops.ml.training.initiate_ml_training import InitiateMLTrainingTool
 from agent.tools.ml_ops.ml.training.save_ml_assets import SaveMLAssetsTool
+from agent.tools.ml_ops.ml.training.start_mmm_run import StartMmmRunTool
 from agent.tools.ml_ops.ml.training.start_training_job import StartTrainingJobTool
 from agent.tools.system_ops.calendar.get_calendar_events import GetCalendarEventsTool
 from agent.tools.system_ops.calendar.get_current_date import GetCurrentDateTool
@@ -31,6 +32,7 @@ STATIC_TOOLS = [
     CheckLastModelRunTool(),
     InitiateMLTrainingTool(),
     StartTrainingJobTool(),
+    StartMmmRunTool(),
     CreateMLTrainingJobTool(),
     SaveMLAssetsTool(),
     CreateTrainingScriptTool(),
