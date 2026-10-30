@@ -13,7 +13,14 @@ START_MMM_RUN_TOOL = "start_mmm_run"
 class StartMmmRunInput(ToolInput):
     kpi: str = Field(description="Output name of the KPI to predict. Must be one of the mapped metric outputs.")
     channels: list[str] = Field(description="Output names of the marketing channels to model, all from the mapped metrics.")
-    controls: list[str] = Field(default_factory=list, description="Output names of control variables, such as price or promo flags.")
+    controls: list[str] = Field(
+        default_factory=list,
+        description="Output names of control variables, such as holiday flags, promotions, price or weather. Confirm them with the user first.",
+    )
+    controls_reason: str = Field(
+        default="",
+        description="Required only when controls is empty: why no control variables apply to this data.",
+    )
     sources: list[SourceSpec] = Field(
         description="Connector tables to read. Each has table, date_column and metrics, where metrics maps an output name to a source column."
     )
@@ -33,10 +40,16 @@ class StartMmmRunTool(BaseTool):
         "generated for this run. A human must approve, edit, or reject the plan before this runs."
     )
     allowed_decisions = ["approve", "edit", "reject"]
-    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} from {date_start} to {date_end}?"
+    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls} from {date_start} to {date_end}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return StartMmmRunInput
+
+    def approval_text(self, args: dict[str, Any]) -> str:
+        values = dict(args)
+        if not values.get("controls"):
+            values["controls"] = f"none ({values.get('controls_reason') or 'no reason given'})"
+        return super().approval_text(values)
 
     async def execute(self, **kwargs: Any) -> ToolOutput:
         scope = current_scope()

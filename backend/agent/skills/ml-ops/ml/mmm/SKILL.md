@@ -14,7 +14,7 @@ Use this recipe whenever the user wants a Marketing Mix Model (MMM), channel att
 3. **Build a data strategy.** Decide which table supplies the KPI, which supply channel spend, which are controls (seasonality, promotions, pricing, weather), the date window, and how to aggregate to one row per date. Write the reasoning down in plain language for the user.
 4. **Check the plan against the data.** Read each connector's earliest and latest dates from `list_channels_within_connector` (no SQL needed for these). Call `get_current_date` and `resolve_date_range` for the window. Do not ask the user for dates unless the tool errors.
 5. **Choose the configuration.** Start from the defaults in [config-reference](../config-reference/SKILL.md). Only override a value when you can justify it from the data (for example fewer draws for a quick check, a shorter adstock for weekly data).
-6. **Request the run.** Call `start_mmm_run` with the sources, KPI, channels, controls, date range, overrides, and a `rationale` that explains the strategy. A human approves, edits, or rejects it first.
+6. **Request the run.** Confirm controls with the user first (see data-strategy section 3). Call `start_mmm_run` with the sources, KPI, channels, controls, date range, overrides, and a `rationale` that explains the strategy. Pass `controls_reason` only when no controls apply. A human approves, edits, or rejects it first.
 7. **Explain the outcome.** When the job finishes, read the evaluation (see [evaluation](../evaluation/SKILL.md)) and report convergence, fit, and any excluded channels. Never claim results before a job has succeeded.
 
 ## What happens when a run starts
