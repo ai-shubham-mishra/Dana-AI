@@ -12,7 +12,7 @@ from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field, model_validator
 
 from agent.request_context import parse_client_timezone
-from agent.runtime import pending_approval, stream_turn
+from agent.runtime import current_todos, pending_approval, stream_turn
 from agent.tools.system_ops.hitl.ask_user import check_answer
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.keyvault.client import KeyVaultError
@@ -36,11 +36,17 @@ class ChatSummary(BaseModel):
     updated_at: datetime
 
 
+class TodoOut(BaseModel):
+    content: str = ""
+    status: str = "pending"
+
+
 class MessageOut(BaseModel):
     id: str
     role: Literal["user", "assistant"]
     content: str
     thinking: str | None = None
+    todos: list[TodoOut] = []
     created_at: datetime
 
 
@@ -164,7 +170,7 @@ async def list_messages(
     cursor = (
         request.app.state.db.messages.find(
             {"org_id": principal.org_id, "user_id": principal.user_id, "chat_id": chat_id},
-            {"_id": 0, "id": 1, "role": 1, "content": 1, "thinking": 1, "created_at": 1},
+            {"_id": 0, "id": 1, "role": 1, "content": 1, "thinking": 1, "todos": 1, "created_at": 1},
         )
         .sort("created_at", 1)
         .limit(LIST_LIMIT * 4)
@@ -274,6 +280,19 @@ def split_reply(text: str, boundary: int) -> tuple[str, str]:
     return text[:boundary].rstrip(), text[boundary:].lstrip()
 
 
+def saved_plan(todos: list[dict], paused: bool) -> list[dict]:
+    """Plan snapshot stored on a reply segment; a clean finish settles steps still in progress."""
+    plan = []
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        status = str(todo.get("status", "pending"))
+        if status == "in_progress" and not paused:
+            status = "completed"
+        plan.append({"content": str(todo.get("content", "")), "status": status})
+    return plan
+
+
 def _stream_response(
     request: Request,
     scope: dict[str, str],
@@ -294,19 +313,25 @@ def _stream_response(
         reply: list[str] = []
         boundary = 0
         paused = False
+        plan: list[dict] | None = None
         try:
             async for event, data in stream_turn(agent, chat_id, job_scope=job_scope, **turn):
                 if event == "token":
                     reply.append(data["text"])
                 if event in ("tool_call", "tool_result"):
                     boundary = len("".join(reply))
+                if event == "todos":
+                    plan = data["todos"]
                 if event == "interrupt":
                     paused = True
                     boundary = len("".join(reply))
                 yield _sse(event, data)
             text = "".join(reply)
             thinking, content = split_reply(text, boundary)
-            if text:
+            if plan is None and turn.get("decisions") is not None:
+                plan = await current_todos(agent, chat_id)
+            todos = saved_plan(plan or [], paused)
+            if text or todos:
                 await db.messages.insert_one(
                     {
                         "id": uuid.uuid4().hex,
@@ -314,6 +339,7 @@ def _stream_response(
                         "role": "assistant",
                         "content": content,
                         "thinking": thinking,
+                        "todos": todos,
                         "created_at": _now(),
                     }
                 )

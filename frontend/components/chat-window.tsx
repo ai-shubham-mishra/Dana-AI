@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, BarChart3, Cable, Circle, CircleCheck, Loader2, Send, Sparkles, Wrench } from "lucide-react";
+import { ArrowDown, BarChart3, Cable, Circle, CircleCheck, CircleDashed, Loader2, Send, Sparkles, Wrench } from "lucide-react";
 
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
@@ -68,7 +68,7 @@ function savedPart(message: ChatMessage): TurnPart {
     id: message.id,
     thinking: message.thinking ?? "",
     tools: [],
-    todos: [],
+    todos: message.todos ?? [],
     answer: message.content,
     live: false,
     streamed: false,
@@ -129,8 +129,10 @@ function TodoPanel({ todos, live }: { todos: TodoItem[]; live: boolean }) {
             <li key={`${index}-${todo.content}`} className="flex items-start gap-2 text-sm">
               {done ? (
                 <CircleCheck className="mt-0.5 size-4 shrink-0 text-primary" />
+              ) : inProgress && live ? (
+                <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
               ) : inProgress ? (
-                <Loader2 className={`mt-0.5 size-4 shrink-0 text-primary ${live ? "animate-spin" : ""}`} />
+                <CircleDashed className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               ) : (
                 <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               )}
@@ -451,7 +453,11 @@ export function ChatWindow() {
         baseCount: saved.length,
         done: false,
       };
-      setRuns((prev) => ({ ...prev, [chat]: [...(prev[chat] ?? []), run] }));
+      setRuns((prev) => {
+        const earlier = prev[chat] ?? [];
+        const carried = userContent === null ? (earlier[earlier.length - 1]?.todos ?? []) : [];
+        return { ...prev, [chat]: [...earlier, { ...run, todos: carried }] };
+      });
       await start(chat, controller.signal, {
         onToken: (text) => {
           streamed = true;
