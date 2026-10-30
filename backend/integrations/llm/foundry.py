@@ -3,6 +3,7 @@ from langchain_anthropic import ChatAnthropic
 from integrations.keyvault.client import KeyVaultReader
 
 MAX_RESPONSE_TOKENS = 13000
+MAX_INPUT_TOKENS = 200_000
 ENDPOINT_SECRET = "AZURE-FOUNDARY-SC-API-ENDPOINT"
 API_KEY_SECRET = "AZURE-FOUNDARY-SC-API-KEY"
 
@@ -21,4 +22,6 @@ def build_claude_model(reader: KeyVaultReader, model_name: str) -> ChatAnthropic
         anthropic_api_key=reader.get_secret(API_KEY_SECRET),
         max_tokens=MAX_RESPONSE_TOKENS,
         thinking=_thinking_off(model_name),
+        # Deepagents summarizes and truncates history only near 85% of this window, which keeps signed thinking blocks intact.
+        profile={"max_input_tokens": MAX_INPUT_TOKENS},
     )
