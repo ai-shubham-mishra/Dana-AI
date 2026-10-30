@@ -15,6 +15,7 @@ class ListChannelsWithinConnectorTool(ConnectorTool):
         "so a human must approve or edit the connector choice before this runs."
     )
     allowed_decisions = ["approve", "edit", "reject"]
+    approval_summary = "Read the marketing channels inside connector {connector}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return ListChannelsWithinConnectorInput

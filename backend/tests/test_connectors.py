@@ -50,6 +50,8 @@ class FakeDB:
                 for n, t in sorted(self.tables.items())
                 for c, d in t["columns"]
             ]
+        if "COUNT(_d" in text:
+            return [{f"_n{part[0]}": 0 for part in text.split("COUNT(_d")[1:]}]
         name = next(n for n in self.tables if f'"{n}"' in text)
         rows = self.tables[name]["rows"]
         if " WHERE " in text:

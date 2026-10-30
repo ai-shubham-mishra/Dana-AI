@@ -72,6 +72,7 @@ class AskUserTool(BaseTool):
         "number, boolean, or text. The user's answer is returned as this tool's result, as JSON for typed answers."
     )
     allowed_decisions = ["respond"]
+    approval_summary = "{question}"
 
     def get_input_schema(self) -> type[ToolInput]:
         return AskUserInput

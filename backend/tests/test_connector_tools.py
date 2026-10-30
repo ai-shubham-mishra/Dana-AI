@@ -118,9 +118,18 @@ def test_connector_tools_report_a_missing_pool():
 def test_only_channel_selection_needs_approval():
     tools = build_tools(connector_pool=connector_pool(), datasets_schema="datasets")
     policy = interrupt_policy(tools)
-    assert policy["list_channels_within_connector"] == {"allowed_decisions": ["approve", "edit", "reject"]}
+    assert policy["list_channels_within_connector"]["allowed_decisions"] == ["approve", "edit", "reject"]
     assert "list_connectors" not in policy
     assert "list_channels" not in policy
+
+
+def test_approval_card_text_is_readable_not_langchain_default():
+    tools = build_tools(connector_pool=connector_pool(), datasets_schema="datasets")
+    policy = interrupt_policy(tools)
+    tool_call = {"name": "list_channels_within_connector", "args": {"connector": "sheet_6acf4e48"}, "id": "1"}
+    text = policy["list_channels_within_connector"]["description"](tool_call, {}, None)
+    assert text == "Read the marketing channels inside connector sheet_6acf4e48?"
+    assert "Tool execution requires approval" not in text
 
 
 def test_build_tools_passes_the_pool_to_every_connector_tool():

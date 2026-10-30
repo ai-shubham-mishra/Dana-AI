@@ -12,6 +12,7 @@ from agent.tools.ml_ops.ml.training.initiate_ml_training import InitiateMLTraini
 from agent.tools.ml_ops.ml.training.save_ml_assets import SaveMLAssetsTool
 from agent.tools.ml_ops.ml.training.start_mmm_run import StartMmmRunTool
 from agent.tools.ml_ops.ml.training.start_training_job import StartTrainingJobTool
+from agent.tools.db_ops.query_database import QueryDatabaseTool
 from agent.tools.system_ops.calendar.get_calendar_events import GetCalendarEventsTool
 from agent.tools.system_ops.calendar.get_current_date import GetCurrentDateTool
 from agent.tools.system_ops.calendar.resolve_date_range import ResolveDateRangeTool
@@ -51,9 +52,21 @@ def build_tools(connector_pool=None, datasets_schema: str = "datasets") -> list:
         ListConnectorsTool(**connector_kwargs),
         ListChannelsWithinConnectorTool(**connector_kwargs),
         ListChannelsTool(**connector_kwargs),
+        QueryDatabaseTool(**connector_kwargs),
     ]
 
 
+def _approval_description(tool):
+    def describe(tool_call, state, runtime) -> str:
+        return tool.approval_text(tool_call.get("args") or {})
+
+    return describe
+
+
 def interrupt_policy(tools) -> dict:
-    """Map each tool that needs a human decision to the decisions it allows."""
-    return {tool.name: {"allowed_decisions": list(tool.allowed_decisions)} for tool in tools if tool.allowed_decisions}
+    """Map each tool that needs a human decision to the decisions it allows and a readable approval sentence."""
+    return {
+        tool.name: {"allowed_decisions": list(tool.allowed_decisions), "description": _approval_description(tool)}
+        for tool in tools
+        if tool.allowed_decisions
+    }

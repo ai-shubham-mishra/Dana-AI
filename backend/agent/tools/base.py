@@ -20,6 +20,11 @@ class ToolOutput(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class _ApprovalArgs(dict):
+    def __missing__(self, key: str) -> str:
+        return "?"
+
+
 class BaseTool(LangChainBaseTool):
     """Blueprint for every agent tool. Subclasses set name, description, the input schema and execute()."""
 
@@ -27,6 +32,14 @@ class BaseTool(LangChainBaseTool):
     description: str = ""
     # Decisions a human may take before this tool runs. None means the tool runs without approval.
     allowed_decisions: ClassVar[list[str] | None] = None
+    # Sentence shown on the approval card. Placeholders are filled from the tool call arguments.
+    approval_summary: ClassVar[str] = "Approve running {name}?"
+
+    def approval_text(self, args: dict[str, Any]) -> str:
+        values = _ApprovalArgs(name=self.name)
+        for key, value in args.items():
+            values[key] = ", ".join(map(str, value)) if isinstance(value, list) else value
+        return self.approval_summary.format_map(values)
 
     @abstractmethod
     def get_input_schema(self) -> type[ToolInput]:

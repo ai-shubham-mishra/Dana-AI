@@ -33,6 +33,7 @@ class StartMmmRunTool(BaseTool):
         "generated for this run. A human must approve, edit, or reject the plan before this runs."
     )
     allowed_decisions = ["approve", "edit", "reject"]
+    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} from {date_start} to {date_end}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return StartMmmRunInput
