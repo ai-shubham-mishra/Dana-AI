@@ -3,6 +3,7 @@
 import { Activity, CheckCircle2, CircleDashed, XCircle, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { KeyValueBoxes } from "@/components/key-value";
 import { useAccessToken } from "@/lib/auth";
 import { relativeTime } from "@/lib/format";
 import { useJob, useJobs } from "@/lib/queries";
@@ -23,13 +24,6 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatValue(value: unknown) {
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(4);
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }
 
 function ProgressBar({ percent, status }: { percent: number; status: JobStatus }) {
@@ -150,7 +144,9 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
             {params.map(([key, value]) => (
               <div key={key} className="contents">
                 <dt className="text-muted-foreground">{key}</dt>
-                <dd className="break-all font-mono text-xs leading-5">{formatValue(value)}</dd>
+                <dd className="min-w-0 font-mono text-xs leading-5">
+                  <KeyValueBoxes data={value} />
+                </dd>
               </div>
             ))}
           </dl>
@@ -164,7 +160,9 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
             {metrics.map(([key, value]) => (
               <div key={key} className="contents">
                 <dt className="text-muted-foreground">{key}</dt>
-                <dd className="break-all font-mono text-xs leading-5">{formatValue(value)}</dd>
+                <dd className="min-w-0 font-mono text-xs leading-5">
+                  <KeyValueBoxes data={value} />
+                </dd>
               </div>
             ))}
           </dl>

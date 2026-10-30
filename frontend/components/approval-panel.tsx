@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, Pencil, Reply, ShieldAlert, X, type LucideIcon } from "lucide-react";
 
+import { KeyValueBoxes } from "@/components/key-value";
 import { Markdown } from "@/components/markdown";
 import type { Decision, DecisionType, PendingAction, PendingApproval } from "@/lib/types";
 
@@ -42,10 +43,6 @@ function responseTypeOf(action: PendingAction): ResponseType {
       ? declared
       : "text";
   return (type === "single_select" || type === "multi_select") && optionsOf(action).length === 0 ? "text" : type;
-}
-
-function formatValue(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 function answerFor(action: PendingAction, draft: Draft): Decision | null {
@@ -208,7 +205,8 @@ function ApprovalCard({
   disabled: boolean;
   onChange: (patch: Partial<Draft>) => void;
 }) {
-  const details = action.name === "ask_user" ? [] : Object.entries(action.args);
+  const details = action.name === "ask_user" ? {} : action.args;
+  const hasDetails = Object.keys(details).length > 0;
   const argsError = draft.choice === "edit" && !parseArgs(draft.argsText) ? "Edited arguments must be a JSON object." : null;
 
   return (
@@ -218,15 +216,10 @@ function ApprovalCard({
       ) : (
         <p className="text-sm font-medium">{action.description}</p>
       )}
-      {details.length > 0 && (
-        <dl className="mt-2 space-y-1 text-xs">
-          {details.map(([key, value]) => (
-            <div key={key} className="flex gap-2">
-              <dt className="shrink-0 text-muted-foreground">{key}</dt>
-              <dd className="min-w-0 break-all">{formatValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
+      {hasDetails && (
+        <div className="mt-2 text-xs">
+          <KeyValueBoxes data={details} />
+        </div>
       )}
 
       {action.allowed_decisions.length > 1 && (
