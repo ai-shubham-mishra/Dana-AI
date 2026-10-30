@@ -2,6 +2,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
 
 from config.settings import Settings
@@ -106,6 +107,10 @@ async def stream_turn(
             yield "tool_call", {"id": str(event["run_id"]), "name": name, "args": args}
         elif kind == "on_tool_end":
             yield "tool_result", {"id": str(event["run_id"]), "name": event.get("name", "")}
+        elif kind == "on_tool_error":
+            if isinstance(data.get("error"), GraphBubbleUp):
+                continue
+            yield "tool_result", {"id": str(event["run_id"]), "name": event.get("name", ""), "failed": True}
     pending = await pending_approval(agent, chat_id)
     if pending is not None:
         yield "interrupt", pending

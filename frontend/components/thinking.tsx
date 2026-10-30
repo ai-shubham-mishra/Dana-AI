@@ -72,11 +72,33 @@ export function StatusLine({ label }: { label: string }) {
   );
 }
 
-export function ToolStatusIcon({ done }: { done: boolean }) {
+export function ToolStatusIcon({ done, failed = false }: { done: boolean; failed?: boolean }) {
   return (
     <span className="relative flex size-3.5 shrink-0 items-center justify-center">
       <AnimatePresence initial={false} mode="wait">
-        {done ? (
+        {done && failed ? (
+          <motion.svg
+            key="failed"
+            viewBox="0 0 16 16"
+            className="size-3.5 text-destructive"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            initial={{ scale: 0.4, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 500, damping: 22 }}
+            aria-label="Failed"
+          >
+            <motion.path
+              d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+            />
+          </motion.svg>
+        ) : done ? (
           <motion.svg
             key="check"
             viewBox="0 0 16 16"
