@@ -148,7 +148,7 @@ class FakeCatalog:
     async def get_connector_columns(self, pool, schema, table):
         return self.columns.get(table)
 
-    async def get_daily_metric_rows(self, pool, schema, table, org_id, date_column, metric_columns, start, end, filters=None):
+    async def get_daily_metric_rows(self, pool, schema, table, org_id, date_column, metric_columns, start, end, filters=None, text_columns=None):
         self.calls.append((table, org_id, date_column, tuple(metric_columns), start, end, filters))
         return self.metric_rows.get(table, [])
 
@@ -184,9 +184,27 @@ def test_validate_sources_refuses_shared_tables(monkeypatch):
         asyncio.run(validate_sources(None, "datasets", make_plan()))
 
 
-def test_validate_sources_refuses_missing_and_non_numeric_columns(monkeypatch):
+def test_validate_sources_refuses_undeclared_text_metrics(monkeypatch):
     columns = good_columns()
     columns["google_ads"] = [column("org_id", "text"), column("date", "date"), column("search_spend", "text")]
+    fake = FakeCatalog(columns, {})
+    monkeypatch.setattr(catalog, "get_connector_columns", fake.get_connector_columns)
+    with pytest.raises(PlanError, match="is text; profile it and declare"):
+        asyncio.run(validate_sources(None, "datasets", make_plan()))
+
+
+def test_validate_sources_accepts_declared_text_metrics(monkeypatch):
+    columns = good_columns()
+    columns["google_ads"] = [column("org_id", "text"), column("date", "date"), column("search_spend", "text")]
+    fake = FakeCatalog(columns, {})
+    monkeypatch.setattr(catalog, "get_connector_columns", fake.get_connector_columns)
+    plan = make_plan(preparation={"text_to_numeric": ["search"]})
+    asyncio.run(validate_sources(None, "datasets", plan))
+
+
+def test_validate_sources_refuses_missing_and_non_numeric_columns(monkeypatch):
+    columns = good_columns()
+    columns["google_ads"] = [column("org_id", "text"), column("date", "date"), column("search_spend", "boolean")]
     fake = FakeCatalog(columns, {})
     monkeypatch.setattr(catalog, "get_connector_columns", fake.get_connector_columns)
     with pytest.raises(PlanError, match="not numeric"):
@@ -296,7 +314,8 @@ def test_build_config_records_data_scope_only_when_filtered():
 
 def test_run_folder_reports_every_missing_file(tmp_path):
     assert missing_outputs(tmp_path) == list(RUN_FILES)
-    write_inputs(tmp_path, ["date", "revenue"], [{"date": "2024-01-01", "revenue": 1.0}], "a: 1\n", "print(1)\n")
+    write_inputs(tmp_path, ["date", "revenue"], [{"date": "2024-01-01", "revenue": 1.0}], "a: 1\n", "print(1)\n", {"rows_kept": 1})
+    assert (tmp_path / "dataset_log.json").exists()
     assert missing_outputs(tmp_path) == ["evaluation.json", "mmm_model.nc"]
     (tmp_path / "evaluation.json").write_text("{}", encoding="utf-8")
     (tmp_path / "mmm_model.nc").write_bytes(b"")
@@ -437,7 +456,7 @@ def test_generated_script_trains_and_fills_the_run_folder(tmp_path: Path):
     config = build_config(plan)
     config["sampling"].update({"chains": 1, "tune": 10, "draws": 10})
     script = render_script(config, plan.to_dict(), "2024-06-01T00:00:00+00:00")
-    write_inputs(tmp_path, ["date", "revenue", "tv", "price", "search"], rows, dump_config(config), script)
+    write_inputs(tmp_path, ["date", "revenue", "tv", "price", "search"], rows, dump_config(config), script, {"rows_kept": weeks})
 
     async def on_progress(payload):
         pass

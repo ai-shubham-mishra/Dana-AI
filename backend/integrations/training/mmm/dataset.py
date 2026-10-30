@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from psycopg_pool import AsyncConnectionPool
 
 from integrations.connectors import catalog
 from integrations.training.mmm.plan import MMMPlan, PlanError
+from integrations.training.mmm.prep import build_rows
 from integrations.training.mmm.recipe import DATE_COLUMN
 
 MIN_ROWS = 20
@@ -22,6 +24,7 @@ DATE_TYPES = frozenset(
 class DatasetResult:
     columns: list[str]
     rows: list[dict[str, Any]]
+    log: dict[str, Any] = field(default_factory=dict)
 
 
 async def validate_sources(pool: AsyncConnectionPool, schema: str, plan: MMMPlan) -> None:
@@ -44,40 +47,45 @@ async def validate_sources(pool: AsyncConnectionPool, schema: str, plan: MMMPlan
         for output, column in source.metrics.items():
             if column not in types:
                 raise PlanError(f"column '{column}' not found in '{source.table}'")
-            if types[column] not in NUMERIC_TYPES:
+            if types[column] in catalog.TEXT_TYPES:
+                if output not in plan.preparation.text_to_numeric:
+                    raise PlanError(
+                        f"column '{column}' in '{source.table}' is text; profile it and declare "
+                        f"'{output}' in preparation.text_to_numeric to read it as a number"
+                    )
+            elif types[column] not in NUMERIC_TYPES:
                 raise PlanError(f"column '{column}' in '{source.table}' is {types[column]}, not numeric")
 
 
 async def build_dataset(pool: AsyncConnectionPool, schema: str, org_id: str, plan: MMMPlan) -> DatasetResult:
     await validate_sources(pool, schema, plan)
     outputs = plan.output_names()
-    by_day: dict[Any, dict[str, float]] = {}
+    spec = plan.preparation
+    fetch_start = plan.date_start - timedelta(days=spec.history_days())
+    by_day: dict[Any, dict[str, float | None]] = {}
     for source in plan.sources:
         names = list(source.metrics)
+        metric_columns = [source.metrics[name] for name in names]
+        text_columns = [source.metrics[name] for name in names if name in spec.text_to_numeric]
         rows = await catalog.get_daily_metric_rows(
             pool,
             schema,
             source.table,
             org_id,
             source.date_column,
-            [source.metrics[name] for name in names],
-            plan.date_start,
+            metric_columns,
+            fetch_start,
             plan.date_end,
             filters=source.filters or None,
+            text_columns=text_columns or None,
         )
         for row in rows:
             day_values = by_day.setdefault(row["date"], {})
             for name, value in zip(names, row["values"], strict=True):
-                day_values[name] = float(value) if value is not None else 0.0
+                day_values[name] = float(value) if value is not None else None
 
-    rows = []
-    for day in sorted(by_day):
-        values = by_day[day]
-        if plan.kpi not in values:
-            continue
-        record: dict[str, Any] = {DATE_COLUMN: day.isoformat()}
-        record.update({name: values.get(name, 0.0) for name in outputs})
-        rows.append(record)
+    rows, log = build_rows(by_day, outputs, plan.kpi, plan.date_start, plan.date_end, spec)
     if len(rows) < MIN_ROWS:
         raise PlanError(f"only {len(rows)} usable rows in the window; at least {MIN_ROWS} are needed")
-    return DatasetResult(columns=[DATE_COLUMN, *outputs], rows=rows)
+    columns = [DATE_COLUMN, *outputs, *spec.feature_names()]
+    return DatasetResult(columns=columns, rows=rows, log=log)

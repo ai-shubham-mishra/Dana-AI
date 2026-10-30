@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from typing import Any
 
 DATASET_FILE = "dataset.csv"
 CONFIG_FILE = "config.yml"
 TRAIN_FILE = "train.py"
+DATASET_LOG_FILE = "dataset_log.json"
 EVALUATION_FILE = "evaluation.json"
 MODEL_FILE = "mmm_model.nc"
-RUN_FILES = (DATASET_FILE, CONFIG_FILE, TRAIN_FILE, EVALUATION_FILE, MODEL_FILE)
+RUN_FILES = (DATASET_FILE, CONFIG_FILE, TRAIN_FILE, DATASET_LOG_FILE, EVALUATION_FILE, MODEL_FILE)
 
 
 def write_inputs(
@@ -20,6 +22,7 @@ def write_inputs(
     rows: list[dict[str, Any]],
     config_yaml: str,
     script: str,
+    dataset_log: dict[str, Any],
 ) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     with (run_dir / DATASET_FILE).open("w", newline="", encoding="utf-8") as handle:
@@ -28,6 +31,7 @@ def write_inputs(
         writer.writerows(rows)
     (run_dir / CONFIG_FILE).write_text(config_yaml, encoding="utf-8")
     (run_dir / TRAIN_FILE).write_text(script, encoding="utf-8")
+    (run_dir / DATASET_LOG_FILE).write_text(json.dumps(dataset_log, indent=2, default=str), encoding="utf-8")
 
 
 def missing_outputs(run_dir: Path) -> list[str]:

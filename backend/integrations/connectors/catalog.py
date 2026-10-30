@@ -211,6 +211,18 @@ async def count_org_rows(pool: AsyncConnectionPool, schema: str, table: str, org
     return int(row["total"])
 
 
+TEXT_CLEAN_PATTERN = "[[:space:],$€£]"
+TEXT_NUMBER_PATTERN = r"^[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)$"
+
+
+def _numeric_from_text(column: sql.Identifier) -> sql.Composable:
+    """Text read as a number: spaces, commas and currency signs removed. Anything else is NULL."""
+    cleaned = sql.SQL("regexp_replace({}::text, {}, '', 'g')").format(column, sql.Literal(TEXT_CLEAN_PATTERN))
+    return sql.SQL("CASE WHEN {cleaned} ~ {pattern} THEN ({cleaned})::numeric END").format(
+        cleaned=cleaned, pattern=sql.Literal(TEXT_NUMBER_PATTERN)
+    )
+
+
 async def get_daily_metric_rows(
     pool: AsyncConnectionPool,
     schema: str,
@@ -221,13 +233,19 @@ async def get_daily_metric_rows(
     start: date,
     end: date,
     filters: dict[str, str] | None = None,
+    text_columns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
     day = sql.SQL("CAST({} AS date)").format(sql.Identifier(date_column))
-    aggregates = [
-        sql.SQL("SUM({}) AS {}").format(sql.Identifier(column), sql.Identifier(f"_m{index}"))
-        for index, column in enumerate(metric_columns)
-    ]
+    text = set(text_columns or [])
+    aggregates = []
+    for index, column in enumerate(metric_columns):
+        identifier = sql.Identifier(column)
+        if column in text:
+            expression = sql.SQL("SUM(COALESCE({}, 0))").format(_numeric_from_text(identifier))
+        else:
+            expression = sql.SQL("SUM({})").format(identifier)
+        aggregates.append(sql.SQL("{} AS {}").format(expression, sql.Identifier(f"_m{index}")))
     conditions = [sql.SQL("{org}::text = %s").format(org=sql.Identifier(ORG_COLUMN))]
     params: list[Any] = [org_id]
     for column, value in (filters or {}).items():
@@ -253,6 +271,63 @@ async def get_daily_metric_rows(
         }
         for row in rows
     ]
+
+
+async def profile_columns(
+    pool: AsyncConnectionPool,
+    schema: str,
+    table: str,
+    org_id: str,
+    columns: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Per column: rows, blanks, values readable as numbers, unreadable values and their sum."""
+    relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
+    aggregates = [sql.SQL("COUNT(*) AS _total")]
+    for index, column in enumerate(columns):
+        identifier = sql.Identifier(column)
+        text_form = sql.SQL("{}::text").format(identifier)
+        blank = sql.SQL("({} IS NULL OR btrim({}) = '')").format(identifier, text_form)
+        parsed = _numeric_from_text(identifier)
+        aggregates.extend(
+            [
+                sql.SQL("COUNT(*) FILTER (WHERE {}) AS _blank_{}").format(blank, index),
+                sql.SQL("COUNT({}) AS _numeric_{}").format(parsed, index),
+                sql.SQL("COUNT(*) FILTER (WHERE NOT {blank} AND {parsed} IS NULL) AS _unreadable_{i}").format(
+                    blank=blank, parsed=parsed, i=index
+                ),
+                sql.SQL("MIN({}) AS _min_{}").format(parsed, index),
+                sql.SQL("MAX({}) AS _max_{}").format(parsed, index),
+                sql.SQL("SUM({}) AS _sum_{}").format(parsed, index),
+                sql.SQL(
+                    "(ARRAY_AGG(DISTINCT {text}) FILTER (WHERE NOT {blank} AND {parsed} IS NULL))[1:5] AS _samples_{i}"
+                ).format(text=text_form, blank=blank, parsed=parsed, i=index),
+            ]
+        )
+    query = sql.SQL("SELECT {aggregates} FROM {relation} WHERE {org}::text = %s").format(
+        aggregates=sql.SQL(", ").join(aggregates),
+        relation=relation,
+        org=sql.Identifier(ORG_COLUMN),
+    )
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, (org_id,))
+        row = await cur.fetchone()
+    profile: dict[str, dict[str, Any]] = {}
+    for index, column in enumerate(columns):
+        profile[column] = {
+            "rows": row["_total"],
+            "blank": row[f"_blank_{index}"],
+            "readable_as_number": row[f"_numeric_{index}"],
+            "unreadable": row[f"_unreadable_{index}"],
+            "min": _json_number(row[f"_min_{index}"]),
+            "max": _json_number(row[f"_max_{index}"]),
+            "sum": _json_number(row[f"_sum_{index}"]),
+            "unreadable_samples": row[f"_samples_{index}"] or [],
+        }
+    return profile
+
+
+def _json_number(value: Any) -> float | None:
+    return float(value) if value is not None else None
 
 
 async def get_column_values(
