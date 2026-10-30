@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
+from agent import runtime
 from agent.factory import build_dana_agent
 from api.main import create_app
 from integrations.keyvault.client import KeyVaultNotConfigured
@@ -149,3 +150,14 @@ def test_agent_is_built_once_and_reused(raw_db, member):
         c.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "one"}, headers=headers)
         c.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "two"}, headers=headers)
     assert len(calls) == 1
+
+
+def test_step_limit_emits_friendly_error_instead_of_generic_failure(chat_client, member, raw_db, monkeypatch):
+    monkeypatch.setattr(runtime, "AGENT_RECURSION_LIMIT", 1)
+    headers = auth(mint())
+    chat_id = new_chat(chat_client, headers)
+    res = chat_client.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "Plan an MMM"}, headers=headers)
+
+    errors = [data["message"] for name, data in parse_sse(res.text) if name == "error"]
+    assert errors and "ran out of steps" in errors[0]
+    assert "run failed" not in errors[0]

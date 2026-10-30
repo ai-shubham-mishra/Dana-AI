@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field, model_validator
 
 from agent.request_context import parse_client_timezone
@@ -25,6 +26,7 @@ DEFAULT_TITLE = "New chat"
 TITLE_MAX = 60
 MESSAGE_MAX = 8000
 MAX_DECISIONS = 20
+STEP_LIMIT_MESSAGE = "The agent ran out of steps before finishing. Send 'continue' to pick up where it stopped."
 
 
 class ChatSummary(BaseModel):
@@ -317,6 +319,9 @@ def _stream_response(
                 )
             if not paused:
                 yield _sse("done", {"chat_id": chat_id})
+        except GraphRecursionError:
+            logger.exception("agent hit step limit for chat %s", chat_id)
+            yield _sse("error", {"message": STEP_LIMIT_MESSAGE})
         except Exception:
             logger.exception("agent turn failed for chat %s", chat_id)
             yield _sse("error", {"message": "The agent run failed. Please try again."})
