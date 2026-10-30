@@ -8,7 +8,7 @@ export type StreamHandlers = {
   onToken?: (text: string) => void;
   onTodos?: (todos: TodoItem[]) => void;
   onToolCall?: (call: ToolCallEvent) => void;
-  onToolResult?: (result: { id: string; name: string }) => void;
+  onToolResult?: (result: { id: string; name: string; failed?: boolean }) => void;
   onInterrupt?: (pending: PendingApproval) => void;
   onDone?: () => void;
 };
@@ -76,7 +76,7 @@ async function postStream(
         handlers.onToolCall?.(payload as ToolCallEvent);
         break;
       case "tool_result":
-        handlers.onToolResult?.(payload as { id: string; name: string });
+        handlers.onToolResult?.(payload as { id: string; name: string; failed?: boolean });
         break;
       case "error":
         throw new Error(String(payload.message ?? "The agent run failed"));

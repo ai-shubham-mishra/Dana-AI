@@ -14,7 +14,8 @@ import { useChatSelection } from "@/lib/chat-selection";
 import { useChats, useMessages, usePending } from "@/lib/queries";
 import type { ChatMessage, Decision, TodoItem } from "@/lib/types";
 
-type ToolChip = { id: string; name: string; done: boolean };
+// carried: a pending chip from before a HITL pause, waiting to be adopted by the resumed run's tool call.
+type ToolChip = { id: string; name: string; done: boolean; failed?: boolean; carried?: boolean };
 // boundary: text length at the last tool event; text before it is process, after it is the answer.
 type RunState = {
   id: string;
@@ -177,7 +178,7 @@ function AssistantTurn({ parts }: { parts: TurnPart[] }) {
                     >
                       <Wrench className="size-3 text-primary" />
                       <span>{tool.name.replace(/_/g, " ")}</span>
-                      <ToolStatusIcon done={tool.done} />
+                      <ToolStatusIcon done={tool.done} failed={tool.failed} />
                     </li>
                   ))}
                 </ul>
@@ -455,8 +456,12 @@ export function ChatWindow() {
       };
       setRuns((prev) => {
         const earlier = prev[chat] ?? [];
-        const carried = userContent === null ? (earlier[earlier.length - 1]?.todos ?? []) : [];
-        return { ...prev, [chat]: [...earlier, { ...run, todos: carried }] };
+        const last = earlier[earlier.length - 1];
+        if (userContent !== null || !last) return { ...prev, [chat]: [...earlier, run] };
+        // A resume moves the paused tool chips into the new run, so the same tool call never shows twice.
+        const pending = last.tools.filter((tool) => !tool.done).map((tool) => ({ ...tool, carried: true }));
+        const settledEarlier = [...earlier.slice(0, -1), { ...last, tools: last.tools.filter((tool) => tool.done) }];
+        return { ...prev, [chat]: [...settledEarlier, { ...run, todos: last.todos, tools: pending }] };
       });
       await start(chat, controller.signal, {
         onToken: (text) => {
@@ -466,17 +471,26 @@ export function ChatWindow() {
         onTodos: (todos) => patch(chat, (current) => ({ ...current, todos })),
         onToolCall: ({ id, name }) => {
           streamed = true;
-          patch(chat, (current) => ({
-            ...current,
-            boundary: current.text.length,
-            tools: [...current.tools, { id, name, done: false }],
-          }));
+          patch(chat, (current) => {
+            const adopt = current.tools.findIndex((tool) => tool.carried && tool.name === name);
+            const chip: ToolChip = { id, name, done: false };
+            return {
+              ...current,
+              boundary: current.text.length,
+              tools:
+                adopt >= 0
+                  ? current.tools.map((tool, index) => (index === adopt ? chip : tool))
+                  : [...current.tools, chip],
+            };
+          });
         },
-        onToolResult: ({ id }) =>
+        onToolResult: ({ id, failed }) =>
           patch(chat, (current) => ({
             ...current,
             boundary: current.text.length,
-            tools: current.tools.map((tool) => (tool.id === id ? { ...tool, done: true } : tool)),
+            tools: current.tools.map((tool) =>
+              tool.id === id ? { ...tool, done: true, failed: Boolean(failed) } : tool,
+            ),
           })),
         onInterrupt: (pending) => {
           interrupted = true;
@@ -503,6 +517,9 @@ export function ChatWindow() {
               ? {
                   ...run,
                   done: true,
+                  tools: interrupted
+                    ? run.tools
+                    : run.tools.map((tool) => (tool.done ? tool : { ...tool, done: true, carried: false })),
                   todos: completedCleanly
                     ? run.todos.map((todo) =>
                         todo.status === "in_progress" ? { ...todo, status: "completed" } : todo,
