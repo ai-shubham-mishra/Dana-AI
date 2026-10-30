@@ -1,0 +1,647 @@
+"use client";
+
+import { Activity, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDashed, Copy, Minus, Trash2, X, XCircle, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+
+import { CollapsibleSection } from "@/components/collapsible-section";
+import { DeleteJobsDialog } from "@/components/delete-jobs-dialog";
+import { JobProgressBar, JobTimeline, StatusBadge } from "@/components/job-primitives";
+import { KeyValueTree } from "@/components/key-value-tree";
+import { useAccessToken } from "@/lib/auth";
+import { relativeTime } from "@/lib/format";
+import { isActive } from "@/lib/job-status";
+import { useDeleteJobs, useJob, useJobs } from "@/lib/queries";
+import type { JobStatus, JobSummary } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+type Filter = "all" | "active" | "succeeded" | "failed";
+
+const BLADE_TRANSITION_MS = 300;
+
+const FILTERS: Record<Filter, { label: string; matches: (status: JobStatus) => boolean }> = {
+  all: { label: "All jobs", matches: () => true },
+  active: { label: "Active jobs", matches: isActive },
+  succeeded: { label: "Succeeded jobs", matches: (status) => status === "succeeded" },
+  failed: { label: "Failed jobs", matches: (status) => status === "failed" },
+};
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function StatCard({
+  label,
+  value,
+  icon: Icon,
+  tone,
+  pressed,
+  onPress,
+}: {
+  label: string;
+  value: number;
+  icon: LucideIcon;
+  tone: string;
+  pressed: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onPress}
+      className={cn(
+        "rounded-xl border bg-card p-5 text-left shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+        pressed ? "border-primary ring-1 ring-primary/30" : "border-border hover:border-foreground/20",
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">{label}</span>
+        <span className="inline-flex size-8 items-center justify-center rounded-lg bg-muted">
+          <Icon className={cn("size-4", tone)} aria-hidden />
+        </span>
+      </div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">{value}</div>
+    </button>
+  );
+}
+
+function IconButton({ label, onClick, children }: { label: string; onClick: (() => void) | null; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick ?? undefined}
+      disabled={!onClick}
+      className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function RowCheckbox({
+  label,
+  checked,
+  indeterminate = false,
+  disabled = false,
+  title,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <span className={cn("relative inline-flex size-4 shrink-0", disabled && "opacity-40")}>
+      <input
+        ref={ref}
+        type="checkbox"
+        aria-label={label}
+        title={title ?? label}
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        className="peer size-4 cursor-pointer appearance-none rounded-sm border border-brand-purple bg-card outline-none transition-colors checked:border-brand-purple checked:bg-brand-purple indeterminate:border-brand-purple indeterminate:bg-brand-purple hover:border-primary focus-visible:ring-4 focus-visible:ring-brand-purple/15 disabled:cursor-not-allowed"
+      />
+      <Check
+        aria-hidden
+        className="pointer-events-none absolute inset-0 m-auto size-3 text-white opacity-0 transition-opacity peer-checked:opacity-100 peer-indeterminate:opacity-0"
+      />
+      <Minus
+        aria-hidden
+        className="pointer-events-none absolute inset-0 m-auto size-3 text-white opacity-0 transition-opacity peer-indeterminate:opacity-100"
+      />
+    </span>
+  );
+}
+
+function JobIdChip({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  const copy = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    navigator.clipboard
+      ?.writeText(id)
+      .then(() => {
+        setCopied(true);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  };
+
+  return (
+    <span
+      title={id}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted py-0.5 pl-2 pr-0.5 font-mono text-[11px] text-muted-foreground"
+    >
+      <span>{id.slice(0, 5)}</span>
+      <button
+        type="button"
+        aria-label={copied ? "Job ID copied" : `Copy job ID ${id}`}
+        title={copied ? "Copied" : "Copy job ID"}
+        onClick={copy}
+        onKeyDown={(event) => event.stopPropagation()}
+        className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        {copied ? <Check className="size-3 text-success" aria-hidden /> : <Copy className="size-3" aria-hidden />}
+      </button>
+    </span>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="space-y-3 p-5" aria-hidden>
+      {Array.from({ length: 4 }, (_, index) => (
+        <div key={index} className="h-10 animate-pulse rounded-md bg-muted" />
+      ))}
+    </div>
+  );
+}
+
+function JobsTable({
+  jobs,
+  selectedId,
+  onSelect,
+  checkedIds,
+  onToggle,
+  onToggleAll,
+}: {
+  jobs: JobSummary[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  checkedIds: Set<string>;
+  onToggle: (id: string, checked: boolean) => void;
+  onToggleAll: (ids: string[], checked: boolean) => void;
+}) {
+  function handleRowKey(event: KeyboardEvent<HTMLTableRowElement>, index: number, id: string) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = jobs[index + (event.key === "ArrowDown" ? 1 : -1)];
+      if (!next) return;
+      onSelect(next.id);
+      document.getElementById(`job-row-${next.id}`)?.focus();
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelect(id);
+    }
+  }
+
+  const deletableIds = jobs.filter((job) => !isActive(job.status)).map((job) => job.id);
+  const checkedCount = deletableIds.filter((id) => checkedIds.has(id)).length;
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th scope="col" className="w-10 px-5 py-3">
+              <RowCheckbox
+                label="Select all deletable jobs"
+                checked={deletableIds.length > 0 && checkedCount === deletableIds.length}
+                indeterminate={checkedCount > 0 && checkedCount < deletableIds.length}
+                disabled={deletableIds.length === 0}
+                onChange={(checked) => onToggleAll(deletableIds, checked)}
+              />
+            </th>
+            <th scope="col" className="px-5 py-3 font-medium">Job</th>
+            <th scope="col" className="px-5 py-3 font-medium">Kind</th>
+            <th scope="col" className="w-48 px-5 py-3 font-medium">Progress</th>
+            <th scope="col" className="px-5 py-3 font-medium">Status</th>
+            <th scope="col" className="px-5 py-3 font-medium">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job, index) => {
+            const selected = selectedId === job.id;
+            const active = isActive(job.status);
+            return (
+              <tr
+                key={job.id}
+                id={`job-row-${job.id}`}
+                tabIndex={0}
+                aria-selected={selected}
+                onClick={() => onSelect(job.id)}
+                onKeyDown={(event) => handleRowKey(event, index, job.id)}
+                className={cn(
+                  "cursor-pointer border-b border-border outline-none last:border-0 hover:bg-muted/50 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+                  selected && "bg-accent/60 hover:bg-accent/70",
+                )}
+              >
+                <td className="px-5 py-3">
+                  <RowCheckbox
+                    label={`Select ${job.title}`}
+                    checked={checkedIds.has(job.id)}
+                    disabled={active}
+                    title={active ? "Running jobs cannot be deleted yet" : `Select ${job.title}`}
+                    onChange={(checked) => onToggle(job.id, checked)}
+                  />
+                </td>
+                <td className="px-5 py-3">
+                  <div className="flex min-w-0 max-w-[18rem] items-center gap-2">
+                    <span className="min-w-0 truncate font-medium" title={job.title}>{job.title}</span>
+                    <span className="shrink-0"><JobIdChip id={job.id} /></span>
+                  </div>
+                  {job.error ? (
+                    <div className="mt-0.5 line-clamp-2 text-xs text-destructive">{job.error}</div>
+                  ) : job.message ? (
+                    <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{job.message}</div>
+                  ) : null}
+                </td>
+                <td className="px-5 py-3 text-muted-foreground">{job.kind}</td>
+                <td className="px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <JobProgressBar percent={job.percent} status={job.status} />
+                    <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">{job.percent}%</span>
+                  </div>
+                </td>
+                <td className="px-5 py-3">
+                  <StatusBadge status={job.status} />
+                </td>
+                <td className="px-5 py-3 text-muted-foreground">{relativeTime(job.updated_at)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function JobBlade({
+  jobId,
+  open,
+  position,
+  total,
+  onPrev,
+  onNext,
+  onClose,
+}: {
+  jobId: string;
+  open: boolean;
+  position: number | null;
+  total: number;
+  onPrev: (() => void) | null;
+  onNext: (() => void) | null;
+  onClose: () => void;
+}) {
+  const job = useJob(jobId);
+  const detail = job.data;
+  const paramCount = Object.keys(detail?.params ?? {}).length;
+  const metricCount = Object.keys(detail?.metrics ?? {}).length;
+  const stageLine = detail ? [detail.stage?.replace(/_/g, " "), detail.message].filter(Boolean).join(" · ") : "";
+
+  return (
+    <aside
+      aria-label="Job details"
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card shadow-2xl",
+        "lg:static lg:z-0 lg:w-[26rem] lg:max-h-[calc(100dvh-3rem)] lg:shrink-0 lg:rounded-xl lg:border lg:shadow-sm",
+        "lg:transition-[opacity,transform] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none",
+        open ? "lg:translate-x-0 lg:opacity-100" : "lg:translate-x-6 lg:opacity-0",
+      )}
+    >
+      <header className="flex items-center gap-1 border-b border-border px-4 py-2.5">
+        <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {position !== null ? `Job ${position} of ${total}` : "Job details"}
+        </p>
+        <IconButton label="Previous job" onClick={onPrev}>
+          <ChevronUp className="size-4" aria-hidden />
+        </IconButton>
+        <IconButton label="Next job" onClick={onNext}>
+          <ChevronDown className="size-4" aria-hidden />
+        </IconButton>
+        <IconButton label="Close job details" onClick={onClose}>
+          <X className="size-4" aria-hidden />
+        </IconButton>
+      </header>
+
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto p-5 transition-opacity duration-200 motion-reduce:transition-none",
+          job.isPlaceholderData && "opacity-50",
+        )}
+      >
+        {job.isPending ? <p className="text-sm text-muted-foreground">Loading job…</p> : null}
+        {job.error ? <p className="text-sm text-destructive">{job.error.message}</p> : null}
+        {detail ? (
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-2">
+                  <h3 className="min-w-0 text-base font-semibold leading-snug">{detail.title}</h3>
+                  <JobIdChip id={detail.id} />
+                </div>
+                <StatusBadge status={detail.status} />
+              </div>
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span className="min-w-0 truncate">{stageLine}</span>
+                <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{detail.percent}%</span>
+              </div>
+              <JobProgressBar percent={detail.percent} status={detail.status} />
+              {detail.error ? <p className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{detail.error}</p> : null}
+            </div>
+
+            <CollapsibleSection title="Progress updates" count={detail.events.length}>
+              {detail.events.length > 0 ? (
+                <JobTimeline events={detail.events} status={detail.status} percent={detail.percent} />
+              ) : (
+                <p className="text-sm text-muted-foreground">No updates yet.</p>
+              )}
+            </CollapsibleSection>
+
+            {paramCount > 0 ? (
+              <CollapsibleSection title="Parameters" count={paramCount} defaultOpen={false}>
+                <KeyValueTree data={detail.params} />
+              </CollapsibleSection>
+            ) : null}
+
+            {metricCount > 0 ? (
+              <CollapsibleSection title="Metrics" count={metricCount} defaultOpen={false}>
+                <KeyValueTree data={detail.metrics} />
+              </CollapsibleSection>
+            ) : null}
+
+            {detail.artifacts.length > 0 ? (
+              <CollapsibleSection title="Artifacts" count={detail.artifacts.length} defaultOpen={false}>
+                <ul className="divide-y divide-border text-sm">
+                  {detail.artifacts.map((file) => (
+                    <li key={file.name} className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="truncate font-mono text-xs">{file.name}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatBytes(file.bytes)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleSection>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+export function JobsDashboard() {
+  const token = useAccessToken();
+  const jobs = useJobs();
+  const deleteJobs = useDeleteJobs();
+  const items = useMemo(() => jobs.data ?? [], [jobs.data]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [bladeOpen, setBladeOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [filterValue, setFilterValue] = useState<Filter>("all");
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const filter = filterValue;
+  const setFilter = (next: Filter) => {
+    setFilterValue(next);
+    setCheckedIds(new Set());
+  };
+  const selectedForDelete = useMemo(
+    () => items.filter((job) => checkedIds.has(job.id) && !isActive(job.status)).map((job) => job.id),
+    [items, checkedIds],
+  );
+
+  const visible = useMemo(() => items.filter((job) => FILTERS[filter].matches(job.status)), [items, filter]);
+  const countOf = (predicate: (status: JobStatus) => boolean) => items.filter((job) => predicate(job.status)).length;
+  const selectedIndex = visible.findIndex((job) => job.id === selectedId);
+  const goTo = (offset: number) => {
+    const target = visible[selectedIndex + offset];
+    if (target) setSelectedId(target.id);
+  };
+
+  const openJob = (id: string) => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setSelectedId(id);
+    setBladeOpen(true);
+  };
+
+  const closeBlade = useCallback(() => {
+    setBladeOpen(false);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setSelectedId(null), BLADE_TRANSITION_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (!bladeOpen || confirmOpen) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeBlade();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bladeOpen, confirmOpen, closeBlade]);
+
+  const toggleOne = (id: string, checked: boolean) => {
+    setNotice(null);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (ids: string[], checked: boolean) => {
+    setNotice(null);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const confirmDelete = async () => {
+    const result = await deleteJobs.mutateAsync(selectedForDelete).catch(() => null);
+    if (!result) return;
+    if (selectedId && result.deleted.includes(selectedId)) closeBlade();
+    setCheckedIds(new Set());
+    setConfirmOpen(false);
+    const parts: string[] = [];
+    if (result.deleted.length > 0) parts.push(`Deleted ${result.deleted.length} ${result.deleted.length === 1 ? "job" : "jobs"}.`);
+    if (result.skipped.length > 0) {
+      const reasons = [...new Set(result.skipped.map((skip) => skip.reason))].join("; ");
+      parts.push(`Skipped ${result.skipped.length}: ${reasons}.`);
+    }
+    setNotice(parts.join(" "));
+  };
+
+  let body: ReactNode;
+  if (!token) {
+    body = <p className="px-5 py-6 text-sm text-muted-foreground">Sign in to see your jobs.</p>;
+  } else if (jobs.isPending) {
+    body = <TableSkeleton />;
+  } else if (jobs.error) {
+    body = <p className="px-5 py-6 text-sm text-destructive">{jobs.error.message}</p>;
+  } else if (items.length === 0) {
+    body = <p className="px-5 py-6 text-sm text-muted-foreground">No training jobs yet.</p>;
+  } else if (visible.length === 0) {
+    body = (
+      <div className="flex flex-col items-start gap-2 px-5 py-6 text-sm text-muted-foreground">
+        <span>No jobs match this filter.</span>
+        <button type="button" onClick={() => setFilter("all")} className="text-xs font-medium text-primary hover:underline">
+          Show all jobs
+        </button>
+      </div>
+    );
+  } else {
+    body = (
+      <JobsTable
+        jobs={visible}
+        selectedId={selectedId}
+        onSelect={openJob}
+        checkedIds={checkedIds}
+        onToggle={toggleOne}
+        onToggleAll={toggleAll}
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
+      <header className="border-b border-border px-6 py-4 md:px-10">
+        <h1 className="text-sm font-semibold">Jobs</h1>
+        <p className="text-sm text-muted-foreground">Training runs for your organization</p>
+      </header>
+
+      <div className="mx-auto w-full max-w-7xl space-y-6 p-6 md:p-10">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard
+            label="Total jobs"
+            value={items.length}
+            icon={CircleDashed}
+            tone="text-muted-foreground"
+            pressed={filter === "all"}
+            onPress={() => setFilter("all")}
+          />
+          <StatCard
+            label="Active"
+            value={countOf(isActive)}
+            icon={Activity}
+            tone="text-primary"
+            pressed={filter === "active"}
+            onPress={() => setFilter("active")}
+          />
+          <StatCard
+            label="Succeeded"
+            value={countOf((status) => status === "succeeded")}
+            icon={CheckCircle2}
+            tone="text-success"
+            pressed={filter === "succeeded"}
+            onPress={() => setFilter("succeeded")}
+          />
+          <StatCard
+            label="Failed"
+            value={countOf((status) => status === "failed")}
+            icon={XCircle}
+            tone="text-destructive"
+            pressed={filter === "failed"}
+            onPress={() => setFilter("failed")}
+          />
+        </div>
+
+        <div
+          className={cn(
+            "grid gap-y-6 lg:items-start lg:transition-[grid-template-columns,column-gap] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none",
+            bladeOpen ? "lg:grid-cols-[minmax(0,1fr)_26rem] lg:gap-x-6" : "lg:grid-cols-[minmax(0,1fr)_0rem] lg:gap-x-0",
+          )}
+        >
+          <section className="min-w-0 rounded-xl border border-border bg-card shadow-sm">
+            <div
+              className={cn(
+                "flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3 transition-colors",
+                selectedForDelete.length > 0 && "bg-accent/50",
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <h2 className="text-sm font-semibold">{FILTERS[filter].label}</h2>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {visible.length} of {items.length}
+                </span>
+              </div>
+              {selectedForDelete.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs tabular-nums text-muted-foreground">{selectedForDelete.length} selected</span>
+                  <button
+                    type="button"
+                    onClick={() => setCheckedIds(new Set())}
+                    className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-2.5 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden />
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
+            {notice && (
+              <p role="status" className="border-b border-border px-5 py-2 text-xs text-muted-foreground">
+                {notice}
+              </p>
+            )}
+            {body}
+          </section>
+
+          {selectedId && (
+            <div className="min-w-0 overflow-clip lg:sticky lg:top-6">
+              <JobBlade
+                jobId={selectedId}
+                open={bladeOpen}
+                position={selectedIndex >= 0 ? selectedIndex + 1 : null}
+                total={visible.length}
+                onPrev={selectedIndex > 0 ? () => goTo(-1) : null}
+                onNext={selectedIndex >= 0 && selectedIndex < visible.length - 1 ? () => goTo(1) : null}
+                onClose={closeBlade}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {confirmOpen && (
+        <DeleteJobsDialog
+          count={selectedForDelete.length}
+          pending={deleteJobs.isPending}
+          error={deleteJobs.error?.message ?? null}
+          onConfirm={confirmDelete}
+          onOpenChange={(open) => {
+            if (open || deleteJobs.isPending) return;
+            setConfirmOpen(false);
+            deleteJobs.reset();
+          }}
+        />
+      )}
+    </div>
+  );
+}

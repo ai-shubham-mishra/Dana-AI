@@ -1,0 +1,112 @@
+from datetime import date
+from typing import Any
+
+from pydantic import Field, ValidationError
+
+from agent.tools.base import BaseTool, ToolInput, ToolOutput
+from integrations.training.mmm.plan import MMMPlan, PlanError, PreparationSpec, SourceSpec
+from integrations.training.scope import current_scope
+
+START_MMM_RUN_TOOL = "start_mmm_run"
+
+
+class StartMmmRunInput(ToolInput):
+    kpi: str = Field(description="Output name of the KPI to predict. Must be one of the mapped metric outputs.")
+    channels: list[str] = Field(description="Output names of the marketing channels to model, all from the mapped metrics.")
+    controls: list[str] = Field(
+        default_factory=list,
+        description="Output names of control variables, such as holiday flags, promotions, price or weather. Confirm them with the user first.",
+    )
+    controls_reason: str = Field(
+        default="",
+        description="Required only when controls is empty: why no control variables apply to this data.",
+    )
+    sources: list[SourceSpec] = Field(
+        description="Connector tables to read. Each has table, date_column and metrics, where metrics maps an output name to a source column."
+    )
+    date_start: date = Field(description="First date of the training window, YYYY-MM-DD.")
+    date_end: date = Field(description="Last date of the training window, YYYY-MM-DD.")
+    preparation: PreparationSpec = Field(
+        default_factory=PreparationSpec,
+        description="Data preparation after profiling: text_to_numeric outputs, date_features, holiday_country, lags and rolling_means. Leave empty when the source columns are already clean numbers.",
+    )
+    overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional whitelisted config overrides: adstock_l_max, yearly_seasonality, time_varying_intercept, chains, tune, draws, holdout_periods.",
+    )
+    rationale: str = Field(default="", description="Short data-scientist reasoning for these choices, shown to the user on approval.")
+
+
+def _preparation_text(preparation: Any) -> str:
+    if not isinstance(preparation, dict) or not any(preparation.values()):
+        return "none (source columns used as they are)"
+    parts = []
+    if preparation.get("text_to_numeric"):
+        parts.append(f"read as numbers: {', '.join(preparation['text_to_numeric'])}")
+    if preparation.get("date_features"):
+        parts.append(f"date features: {', '.join(preparation['date_features'])}")
+    if preparation.get("holiday_country"):
+        parts.append(f"holidays: {preparation['holiday_country']}")
+    for name, lags in (preparation.get("lags") or {}).items():
+        parts.append(f"{name} lags {lags}")
+    for name, window in (preparation.get("rolling_means") or {}).items():
+        parts.append(f"{name} rolling mean {window}d")
+    return "; ".join(parts)
+
+
+def _scope_text(sources: Any) -> str:
+    if not isinstance(sources, list) or not sources:
+        return "no sources listed"
+    parts = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        filters = source.get("filters") or {}
+        detail = ", ".join(f"{column}={value}" for column, value in filters.items()) or "no filter"
+        parts.append(f"{source.get('table')} ({detail})")
+    return "; ".join(parts) or "no sources listed"
+
+
+class StartMmmRunTool(BaseTool):
+    name: str = START_MMM_RUN_TOOL
+    description: str = (
+        "Start an MMM training run on the org's connector data. The dataset, config and training script are "
+        "generated for this run. A human must approve, edit, or reject the plan before this runs."
+    )
+    allowed_decisions = ["approve", "edit", "reject"]
+    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}, preparation {preparation}?"
+
+    def get_input_schema(self) -> type[ToolInput]:
+        return StartMmmRunInput
+
+    def approval_text(self, args: dict[str, Any]) -> str:
+        values = dict(args)
+        if not values.get("controls"):
+            values["controls"] = f"none ({values.get('controls_reason') or 'no reason given'})"
+        values["scope"] = _scope_text(values.get("sources"))
+        values["preparation"] = _preparation_text(values.get("preparation"))
+        return super().approval_text(values)
+
+    async def execute(self, **kwargs: Any) -> ToolOutput:
+        scope = current_scope()
+        if scope is None:
+            return ToolOutput(success=False, error="Training is unavailable in this context, so no run was started.")
+        try:
+            plan = MMMPlan(**kwargs)
+            job_id = await scope.service.submit_mmm_plan(
+                org_id=scope.org_id,
+                user_id=scope.user_id,
+                chat_id=scope.chat_id,
+                plan=plan,
+            )
+        except (ValidationError, PlanError) as exc:
+            return ToolOutput(
+                success=False,
+                error=f"The MMM plan is invalid: {exc}. Fix the plan and call start_mmm_run again.",
+            )
+        return ToolOutput(
+            result=(
+                f"MMM training run {job_id} is queued. The dataset, config and training script are saved in its run folder. "
+                "Progress is shown on the Jobs tab."
+            )
+        )
