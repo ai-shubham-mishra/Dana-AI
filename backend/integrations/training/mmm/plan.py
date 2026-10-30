@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,62}$")
 RESERVED_OUTPUT_NAMES = frozenset({"date"})
 MAX_FILTER_VALUE_LENGTH = 100
 OVERRIDE_RANGES: dict[str, tuple[int, int]] = {

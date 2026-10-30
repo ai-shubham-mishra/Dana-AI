@@ -1,6 +1,7 @@
 import asyncio
 from datetime import date
 
+from agent.tools.system_ops.connectors.find_connector_columns import FindConnectorColumnsTool
 from agent.tools.system_ops.connectors.list_connector_column_values import ListConnectorColumnValuesTool
 from integrations.connectors import catalog
 from integrations.training.scope import JobScope, bind_scope
@@ -143,3 +144,57 @@ def test_is_read_only_and_registered_without_approval():
     tools = build_tools(connector_pool=None)
     assert "list_connector_column_values" in {t.name for t in tools}
     assert "list_connector_column_values" not in interrupt_policy(tools)
+    assert "find_connector_columns" in {t.name for t in tools}
+    assert "find_connector_columns" not in interrupt_policy(tools)
+
+
+FUZZY_COLUMNS = [
+    {"name": "org_id", "data_type": "text"},
+    {"name": "date", "data_type": "date"},
+    {"name": "GAds-Demand-Gen_spend", "data_type": "double precision"},
+    {"name": "meta_spend", "data_type": "double precision"},
+]
+
+
+def find_tool() -> FindConnectorColumnsTool:
+    return FindConnectorColumnsTool(pool=FakePool(FakeDB({})), datasets_schema="datasets")
+
+
+def run_find(args: dict) -> str:
+    scoped()
+    try:
+        return asyncio.run(find_tool().ainvoke(args))
+    finally:
+        bind_scope(None)
+
+
+def test_finds_hyphenated_columns_with_a_fuzzy_pattern(monkeypatch):
+    patch_catalog(monkeypatch, columns=FUZZY_COLUMNS)
+    output = run_find({"connector": "google_ads", "pattern": "gads.*demand"})
+    assert "1 column(s) in 'google_ads' match 'gads.*demand':" in output
+    assert "- 'GAds-Demand-Gen_spend' (double precision)" in output
+    assert "meta_spend" not in output
+
+
+def test_pattern_is_case_insensitive_and_can_match_alternatives(monkeypatch):
+    patch_catalog(monkeypatch, columns=FUZZY_COLUMNS)
+    output = run_find({"connector": "google_ads", "pattern": "SPEND|demand"})
+    assert "2 column(s)" in output
+    assert "GAds-Demand-Gen_spend" in output and "meta_spend" in output
+
+
+def test_no_match_lists_the_available_columns(monkeypatch):
+    patch_catalog(monkeypatch, columns=FUZZY_COLUMNS)
+    output = run_find({"connector": "google_ads", "pattern": "impressions"})
+    assert "No columns in 'google_ads' match 'impressions'" in output
+    assert "Its columns are: org_id, date, GAds-Demand-Gen_spend, meta_spend." in output
+
+
+def test_refuses_invalid_patterns_and_unknown_connectors(monkeypatch):
+    patch_catalog(monkeypatch, columns=FUZZY_COLUMNS)
+    bad = run_find({"connector": "google_ads", "pattern": "gads("})
+    assert "not a valid regular expression" in bad
+    empty = run_find({"connector": "google_ads", "pattern": "   "})
+    assert "pattern must be 1 to 100 characters" in empty
+    unknown = run_find({"connector": "meta_ads", "pattern": "spend"})
+    assert "Connector 'meta_ads' does not exist" in unknown
