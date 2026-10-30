@@ -348,6 +348,21 @@ def test_run_script_streams_progress_and_returns_result(tmp_path):
     assert seen == [{"stage": "sampling", "percent": 50, "message": "m"}]
 
 
+def test_run_script_accepts_a_result_line_larger_than_the_default_stream_limit(tmp_path):
+    big = "x" * (200 * 1024)
+    code = (
+        'import json\n'
+        f'print("@@result " + json.dumps({{"status": "success", "metrics": {{"blob": "{big}"}}}}), flush=True)\n'
+    )
+
+    async def on_progress(payload):
+        pass
+
+    outcome = asyncio.run(run_script([sys.executable, "-c", code], tmp_path, on_progress, env=sandbox_env()))
+    assert outcome.code == 0
+    assert outcome.result["metrics"]["blob"] == big
+
+
 def test_run_script_reports_nonzero_exit_with_stderr_tail(tmp_path):
     code = 'import sys\nprint("boom", file=sys.stderr)\nsys.exit(3)\n'
 
