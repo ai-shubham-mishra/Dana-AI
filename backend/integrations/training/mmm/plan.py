@@ -71,14 +71,28 @@ class PreparationSpec(BaseModel):
         default_factory=dict,
         description=f"Metric output to trailing rolling-mean window in days (2 to {MAX_ROLLING_WINDOW}), for example {{'search': 7}}. Creates <output>_roll_mean_<days> features.",
     )
+    combine_channels: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Combined channel name to the raw outputs it sums, for example {'social_prospecting': ['meta_reach', 'meta_traffic']}. Each group is a daily sum column and is listed in channels in place of its members.",
+    )
 
     @model_validator(mode="after")
     def _check_preparation(self) -> PreparationSpec:
         if len(set(self.text_to_numeric)) != len(self.text_to_numeric):
             raise PlanError("preparation.text_to_numeric must not repeat")
-        for name in (*self.text_to_numeric, *self.lags, *self.rolling_means):
+        for name in (*self.text_to_numeric, *self.lags, *self.rolling_means, *self.combine_channels):
             if not NAME_PATTERN.match(name):
                 raise PlanError(f"preparation output name '{name}' must be lowercase snake_case")
+        seen: set[str] = set()
+        for group, members in self.combine_channels.items():
+            if group in RESERVED_OUTPUT_NAMES:
+                raise PlanError(f"combined channel name '{group}' is reserved")
+            if len(set(members)) != len(members) or len(members) < 2:
+                raise PlanError(f"combined channel '{group}' needs at least 2 distinct members")
+            repeated = seen & set(members)
+            if repeated:
+                raise PlanError(f"output '{sorted(repeated)[0]}' is in more than one combined channel")
+            seen.update(members)
         if len(set(self.date_features)) != len(self.date_features):
             raise PlanError("preparation.date_features must not repeat")
         if self.holiday_country is not None:
@@ -114,7 +128,36 @@ class PreparationSpec(BaseModel):
         return max(spans, default=0)
 
     def is_empty(self) -> bool:
-        return not (self.text_to_numeric or self.date_features or self.holiday_country or self.lags or self.rolling_means)
+        return not (
+            self.text_to_numeric
+            or self.date_features
+            or self.holiday_country
+            or self.lags
+            or self.rolling_means
+            or self.combine_channels
+        )
+
+
+def check_combine_groups(
+    groups: dict[str, list[str]],
+    outputs: list[str],
+    kpi: str,
+    controls: list[str],
+    features: list[str] | None = None,
+) -> None:
+    """Members must be mapped outputs that are neither the kpi nor a control. Group names must be new names."""
+    known = set(outputs)
+    taken = known | set(features or []) | {kpi}
+    for group, members in groups.items():
+        if group in taken:
+            raise PlanError(f"combined channel '{group}' clashes with an output, prepared feature or the kpi")
+        for member in members:
+            if member not in known:
+                raise PlanError(f"combined channel '{group}' member '{member}' is not a mapped output")
+            if member == kpi:
+                raise PlanError(f"combined channel '{group}' cannot include the kpi '{kpi}'")
+            if member in controls:
+                raise PlanError(f"combined channel '{group}' cannot include control '{member}'")
 
 
 class MMMPlan(BaseModel):
@@ -163,8 +206,17 @@ class MMMPlan(BaseModel):
                 raise PlanError("lags and rolling means of the kpi are not allowed because they leak the target")
         if self.kpi not in known:
             raise PlanError(f"kpi '{self.kpi}' is not a mapped output")
+        groups = self.preparation.combine_channels
+        check_combine_groups(groups, outputs, self.kpi, self.controls, features)
+        members = {member for group_members in groups.values() for member in group_members}
+        for name in self.channels:
+            if name in members:
+                raise PlanError(f"channel '{name}' is combined into a group; list the group name in channels instead")
+        for group in groups:
+            if group not in self.channels:
+                raise PlanError(f"combined channel '{group}' must be listed in channels")
         for group, names, allowed in (
-            ("channels", self.channels, known),
+            ("channels", self.channels, known | set(groups)),
             ("controls", self.controls, known | set(features)),
         ):
             if len(set(names)) != len(names):

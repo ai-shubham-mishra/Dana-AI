@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from psycopg_pool import AsyncConnectionPool
 
 from integrations.connectors import catalog
-from integrations.training.mmm.plan import MMMPlan, PlanError
+from integrations.training.mmm.plan import MMMPlan, PlanError, SourceSpec
 from integrations.training.mmm.prep import build_rows
 from integrations.training.mmm.recipe import DATE_COLUMN
 
@@ -28,7 +28,13 @@ class DatasetResult:
 
 
 async def validate_sources(pool: AsyncConnectionPool, schema: str, plan: MMMPlan) -> None:
-    for source in plan.sources:
+    await check_sources(pool, schema, plan.sources, plan.preparation.text_to_numeric)
+
+
+async def check_sources(
+    pool: AsyncConnectionPool, schema: str, sources: list[SourceSpec], text_to_numeric: list[str]
+) -> None:
+    for source in sources:
         columns = await catalog.get_connector_columns(pool, schema, source.table)
         if columns is None:
             raise PlanError(f"connector table '{source.table}' does not exist")
@@ -48,7 +54,7 @@ async def validate_sources(pool: AsyncConnectionPool, schema: str, plan: MMMPlan
             if column not in types:
                 raise PlanError(f"column '{column}' not found in '{source.table}'")
             if types[column] in catalog.TEXT_TYPES:
-                if output not in plan.preparation.text_to_numeric:
+                if output not in text_to_numeric:
                     raise PlanError(
                         f"column '{column}' in '{source.table}' is text; profile it and declare "
                         f"'{output}' in preparation.text_to_numeric to read it as a number"
@@ -57,16 +63,20 @@ async def validate_sources(pool: AsyncConnectionPool, schema: str, plan: MMMPlan
                 raise PlanError(f"column '{column}' in '{source.table}' is {types[column]}, not numeric")
 
 
-async def build_dataset(pool: AsyncConnectionPool, schema: str, org_id: str, plan: MMMPlan) -> DatasetResult:
-    await validate_sources(pool, schema, plan)
-    outputs = plan.output_names()
-    spec = plan.preparation
-    fetch_start = plan.date_start - timedelta(days=spec.history_days())
+async def fetch_by_day(
+    pool: AsyncConnectionPool,
+    schema: str,
+    org_id: str,
+    sources: list[SourceSpec],
+    text_to_numeric: list[str],
+    fetch_start: date,
+    date_end: date,
+) -> dict[Any, dict[str, float | None]]:
     by_day: dict[Any, dict[str, float | None]] = {}
-    for source in plan.sources:
+    for source in sources:
         names = list(source.metrics)
         metric_columns = [source.metrics[name] for name in names]
-        text_columns = [source.metrics[name] for name in names if name in spec.text_to_numeric]
+        text_columns = [source.metrics[name] for name in names if name in text_to_numeric]
         rows = await catalog.get_daily_metric_rows(
             pool,
             schema,
@@ -75,7 +85,7 @@ async def build_dataset(pool: AsyncConnectionPool, schema: str, org_id: str, pla
             source.date_column,
             metric_columns,
             fetch_start,
-            plan.date_end,
+            date_end,
             filters=source.filters or None,
             text_columns=text_columns or None,
         )
@@ -83,9 +93,21 @@ async def build_dataset(pool: AsyncConnectionPool, schema: str, org_id: str, pla
             day_values = by_day.setdefault(row["date"], {})
             for name, value in zip(names, row["values"], strict=True):
                 day_values[name] = float(value) if value is not None else None
+    return by_day
+
+
+async def build_dataset(pool: AsyncConnectionPool, schema: str, org_id: str, plan: MMMPlan) -> DatasetResult:
+    await validate_sources(pool, schema, plan)
+    outputs = plan.output_names()
+    spec = plan.preparation
+    fetch_start = plan.date_start - timedelta(days=spec.history_days())
+    by_day = await fetch_by_day(
+        pool, schema, org_id, plan.sources, spec.text_to_numeric, fetch_start, plan.date_end
+    )
 
     rows, log = build_rows(by_day, outputs, plan.kpi, plan.date_start, plan.date_end, spec)
     if len(rows) < MIN_ROWS:
         raise PlanError(f"only {len(rows)} usable rows in the window; at least {MIN_ROWS} are needed")
-    columns = [DATE_COLUMN, *outputs, *spec.feature_names()]
+    columns = [DATE_COLUMN, *outputs, *spec.combine_channels, *spec.feature_names()]
     return DatasetResult(columns=columns, rows=rows, log=log)
+

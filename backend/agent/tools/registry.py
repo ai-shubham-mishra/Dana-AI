@@ -2,6 +2,7 @@ from agent.tools.ml_ops.chores.check_last_job import CheckLastJobTool
 from agent.tools.ml_ops.chores.check_last_model_run import CheckLastModelRunTool
 from agent.tools.ml_ops.chores.check_latest_model import CheckLatestModelTool
 from agent.tools.ml_ops.ml.data_prep.create_evaluators import CreateEvaluatorsTool
+from agent.tools.ml_ops.ml.data_prep.combine_low_spend_channels import CombineLowSpendChannelsTool
 from agent.tools.ml_ops.ml.data_prep.list_channels import ListChannelsTool
 from agent.tools.ml_ops.ml.data_prep.preview_mmm_dataset import PreviewMmmDatasetTool
 from agent.tools.ml_ops.ml.data_prep.prepare_training_data import PrepareTrainingDataTool
@@ -59,6 +60,7 @@ def build_tools(connector_pool=None, datasets_schema: str = "datasets") -> list:
         FindConnectorColumnsTool(**connector_kwargs),
         ProfileConnectorColumnsTool(**connector_kwargs),
         PreviewMmmDatasetTool(**connector_kwargs),
+        CombineLowSpendChannelsTool(**connector_kwargs),
         ListChannelsTool(**connector_kwargs),
         QueryDatabaseTool(**connector_kwargs),
     ]
