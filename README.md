@@ -50,8 +50,12 @@ Frontend styling follows the analytics-studio branding.
    python3 -m venv .venv
    ./.venv/bin/pip install -r requirements.txt
    cp .env.example .env   # then fill in the values listed below
-   ./.venv/bin/uvicorn api.main:app --reload --port 8001
+   ./.venv/bin/uvicorn api.main:app --reload --port 8001 \
+     --reload-dir api --reload-dir agent --reload-dir config \
+     --reload-dir integrations --reload-dir middlewares
    ```
+
+   `--reload-dir` limits auto-reload to source packages. Without it, uvicorn also watches `backend/var/`, so writing a run's `train.py` restarts the server and cancels the training job in flight.
 
 3. Frontend (in a second terminal):
 
