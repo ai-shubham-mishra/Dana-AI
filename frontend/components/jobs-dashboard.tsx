@@ -1,15 +1,16 @@
 "use client";
 
-import { Activity, CheckCircle2, ChevronDown, ChevronUp, CircleDashed, X, XCircle, type LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Activity, CheckCircle2, ChevronDown, ChevronUp, CircleDashed, Trash2, X, XCircle, type LucideIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { CollapsibleSection } from "@/components/collapsible-section";
+import { DeleteJobsDialog } from "@/components/delete-jobs-dialog";
 import { JobProgressBar, JobTimeline, StatusBadge } from "@/components/job-primitives";
 import { KeyValueTree } from "@/components/key-value-tree";
 import { useAccessToken } from "@/lib/auth";
 import { relativeTime } from "@/lib/format";
 import { isActive } from "@/lib/job-status";
-import { useJob, useJobs } from "@/lib/queries";
+import { useDeleteJobs, useJob, useJobs } from "@/lib/queries";
 import type { JobStatus, JobSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -77,6 +78,42 @@ function IconButton({ label, onClick, children }: { label: string; onClick: (() 
   );
 }
 
+function RowCheckbox({
+  label,
+  checked,
+  indeterminate = false,
+  disabled = false,
+  title,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label={label}
+      title={title ?? label}
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      className="size-4 cursor-pointer rounded border-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
+    />
+  );
+}
+
 function TableSkeleton() {
   return (
     <div className="space-y-3 p-5" aria-hidden>
@@ -87,7 +124,21 @@ function TableSkeleton() {
   );
 }
 
-function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selectedId: string | null; onSelect: (id: string) => void }) {
+function JobsTable({
+  jobs,
+  selectedId,
+  onSelect,
+  checkedIds,
+  onToggle,
+  onToggleAll,
+}: {
+  jobs: JobSummary[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  checkedIds: Set<string>;
+  onToggle: (id: string, checked: boolean) => void;
+  onToggleAll: (ids: string[], checked: boolean) => void;
+}) {
   function handleRowKey(event: KeyboardEvent<HTMLTableRowElement>, index: number, id: string) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -101,11 +152,23 @@ function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selecte
     }
   }
 
+  const deletableIds = jobs.filter((job) => !isActive(job.status)).map((job) => job.id);
+  const checkedCount = deletableIds.filter((id) => checkedIds.has(id)).length;
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
+            <th scope="col" className="w-10 px-5 py-3">
+              <RowCheckbox
+                label="Select all deletable jobs"
+                checked={deletableIds.length > 0 && checkedCount === deletableIds.length}
+                indeterminate={checkedCount > 0 && checkedCount < deletableIds.length}
+                disabled={deletableIds.length === 0}
+                onChange={(checked) => onToggleAll(deletableIds, checked)}
+              />
+            </th>
             <th scope="col" className="px-5 py-3 font-medium">Job</th>
             <th scope="col" className="px-5 py-3 font-medium">Job ID</th>
             <th scope="col" className="px-5 py-3 font-medium">Kind</th>
@@ -117,6 +180,7 @@ function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selecte
         <tbody>
           {jobs.map((job, index) => {
             const selected = selectedId === job.id;
+            const active = isActive(job.status);
             return (
               <tr
                 key={job.id}
@@ -130,6 +194,15 @@ function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selecte
                   selected && "bg-muted/60",
                 )}
               >
+                <td className="px-5 py-3">
+                  <RowCheckbox
+                    label={`Select ${job.title}`}
+                    checked={checkedIds.has(job.id)}
+                    disabled={active}
+                    title={active ? "Running jobs cannot be deleted yet" : `Select ${job.title}`}
+                    onChange={(checked) => onToggle(job.id, checked)}
+                  />
+                </td>
                 <td className="px-5 py-3">
                   <div className="font-medium">{job.title}</div>
                   {job.error ? (
@@ -264,9 +337,22 @@ function JobBlade({
 export function JobsDashboard() {
   const token = useAccessToken();
   const jobs = useJobs();
+  const deleteJobs = useDeleteJobs();
   const items = useMemo(() => jobs.data ?? [], [jobs.data]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filterValue, setFilterValue] = useState<Filter>("all");
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const filter = filterValue;
+  const setFilter = (next: Filter) => {
+    setFilterValue(next);
+    setCheckedIds(new Set());
+  };
+  const selectedForDelete = useMemo(
+    () => items.filter((job) => checkedIds.has(job.id) && !isActive(job.status)).map((job) => job.id),
+    [items, checkedIds],
+  );
 
   const visible = useMemo(() => items.filter((job) => FILTERS[filter].matches(job.status)), [items, filter]);
   const countOf = (predicate: (status: JobStatus) => boolean) => items.filter((job) => predicate(job.status)).length;
@@ -277,13 +363,50 @@ export function JobsDashboard() {
   };
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || confirmOpen) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") setSelectedId(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId]);
+  }, [selectedId, confirmOpen]);
+
+  const toggleOne = (id: string, checked: boolean) => {
+    setNotice(null);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (ids: string[], checked: boolean) => {
+    setNotice(null);
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const confirmDelete = async () => {
+    const result = await deleteJobs.mutateAsync(selectedForDelete).catch(() => null);
+    if (!result) return;
+    if (selectedId && result.deleted.includes(selectedId)) setSelectedId(null);
+    setCheckedIds(new Set());
+    setConfirmOpen(false);
+    const parts: string[] = [];
+    if (result.deleted.length > 0) parts.push(`Deleted ${result.deleted.length} ${result.deleted.length === 1 ? "job" : "jobs"}.`);
+    if (result.skipped.length > 0) {
+      const reasons = [...new Set(result.skipped.map((skip) => skip.reason))].join("; ");
+      parts.push(`Skipped ${result.skipped.length}: ${reasons}.`);
+    }
+    setNotice(parts.join(" "));
+  };
 
   let body: ReactNode;
   if (!token) {
@@ -304,7 +427,16 @@ export function JobsDashboard() {
       </div>
     );
   } else {
-    body = <JobsTable jobs={visible} selectedId={selectedId} onSelect={setSelectedId} />;
+    body = (
+      <JobsTable
+        jobs={visible}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        checkedIds={checkedIds}
+        onToggle={toggleOne}
+        onToggleAll={toggleAll}
+      />
+    );
   }
 
   return (
@@ -352,12 +484,39 @@ export function JobsDashboard() {
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_26rem] lg:items-start">
           <section className="min-w-0 rounded-xl border border-border bg-card shadow-sm">
-            <div className="flex items-center justify-between border-b border-border px-5 py-3">
-              <h2 className="text-sm font-semibold">{FILTERS[filter].label}</h2>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {visible.length} of {items.length}
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
+              <div className="flex items-center gap-3">
+                <h2 className="text-sm font-semibold">{FILTERS[filter].label}</h2>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {visible.length} of {items.length}
+                </span>
+              </div>
+              {selectedForDelete.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs tabular-nums text-muted-foreground">{selectedForDelete.length} selected</span>
+                  <button
+                    type="button"
+                    onClick={() => setCheckedIds(new Set())}
+                    className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-2.5 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden />
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
+            {notice && (
+              <p role="status" className="border-b border-border px-5 py-2 text-xs text-muted-foreground">
+                {notice}
+              </p>
+            )}
             {body}
           </section>
 
@@ -378,6 +537,20 @@ export function JobsDashboard() {
           )}
         </div>
       </div>
+
+      {confirmOpen && (
+        <DeleteJobsDialog
+          count={selectedForDelete.length}
+          pending={deleteJobs.isPending}
+          error={deleteJobs.error?.message ?? null}
+          onConfirm={confirmDelete}
+          onOpenChange={(open) => {
+            if (open || deleteJobs.isPending) return;
+            setConfirmOpen(false);
+            deleteJobs.reset();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -94,6 +94,11 @@ export type JobArtifact = {
   bytes: number;
 };
 
+export type DeleteJobsResult = {
+  deleted: string[];
+  skipped: { id: string; reason: string }[];
+};
+
 export type JobDetail = JobSummary & {
   params: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;

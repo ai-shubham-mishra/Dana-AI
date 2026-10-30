@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import shutil
 import sys
 import uuid
 from collections import deque
@@ -8,6 +9,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from azure.core.exceptions import ResourceNotFoundError
 
 from config.settings import BACKEND_ROOT, Settings
 from integrations.training.mmm.dataset import build_dataset, validate_sources
@@ -26,6 +29,7 @@ from integrations.training.protocol import parse_line
 logger = logging.getLogger(__name__)
 
 JOB_KIND = "mmm_training"
+ACTIVE_STATUSES = ("queued", "running")
 MMM_DATA_FILE = "mmm_demo.csv"
 MMM_CONFIG_FILE = "mmm_demo.yaml"
 MODEL_FILE = "mmm_model.nc"
@@ -192,6 +196,45 @@ class TrainingService:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def delete_jobs(self, *, org_id: str, user_id: str, job_ids: list[str]) -> dict[str, Any]:
+        scope = {"org_id": org_id, "user_id": user_id}
+        cursor = self._db.jobs.find({**scope, "id": {"$in": job_ids}}, {"_id": 0, "id": 1, "status": 1, "artifact": 1})
+        found = {doc["id"]: doc async for doc in cursor}
+        deleted: list[str] = []
+        skipped: list[dict[str, str]] = []
+        for job_id in job_ids:
+            doc = found.get(job_id)
+            if doc is None:
+                skipped.append({"id": job_id, "reason": "Job not found"})
+                continue
+            if doc["status"] in ACTIVE_STATUSES:
+                skipped.append({"id": job_id, "reason": "Job is still running"})
+                continue
+            try:
+                await self._remove_job_files(job_id, doc.get("artifact"))
+            except Exception:
+                logger.exception("Failed to remove files for training job %s", job_id)
+                skipped.append({"id": job_id, "reason": "Files could not be removed; try again"})
+                continue
+            await self._db.job_events.delete_many({"job_id": job_id})
+            await self._db.jobs.delete_one({**scope, "id": job_id})
+            deleted.append(job_id)
+        return {"deleted": deleted, "skipped": skipped}
+
+    async def _remove_job_files(self, job_id: str, artifact: dict[str, Any] | None) -> None:
+        if artifact and artifact.get("blob_path"):
+            container = self._blob.get_container_client(artifact.get("blob_container") or self._settings.blob_container)
+            try:
+                await container.delete_blob(artifact["blob_path"])
+            except ResourceNotFoundError:
+                pass
+        root = self._settings.training_output_dir.resolve()
+        run_dir = (root / job_id).resolve()
+        if run_dir.parent != root:
+            raise ValueError(f"Refusing to delete run folder outside training output: {run_dir}")
+        if run_dir.exists():
+            await asyncio.to_thread(shutil.rmtree, run_dir)
 
     def _mmm_command(self, job_dir: Path, request: MMMRequest) -> list[str]:
         return [

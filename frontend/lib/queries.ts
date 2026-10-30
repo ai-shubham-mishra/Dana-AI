@@ -1,10 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, ApiError } from "./api";
+import { apiGet, apiPostJson, ApiError } from "./api";
 import { useAccessToken } from "./auth";
-import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, JobDetail, JobSummary, Me, PendingApproval } from "./types";
+import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, DeleteJobsResult, JobDetail, JobSummary, Me, PendingApproval } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
 const CHATS_REFRESH_MS = 10_000;
@@ -35,6 +35,21 @@ export function useChats() {
   });
 }
 export const useJobs = () => useApiQuery<JobSummary[]>("jobs", "/api/v1/jobs", hasActiveJob);
+
+export function useDeleteJobs() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return useMutation<DeleteJobsResult, ApiError, string[]>({
+    mutationFn: (jobIds) => apiPostJson<DeleteJobsResult>("/api/v1/jobs/delete", token ?? "", { job_ids: jobIds }),
+    onSuccess: async (result) => {
+      queryClient.setQueryData<JobSummary[]>(["jobs", token], (jobs) =>
+        jobs?.filter((job) => !result.deleted.includes(job.id)),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["jobs", token] });
+      for (const id of result.deleted) queryClient.removeQueries({ queryKey: ["job", token, id] });
+    },
+  });
+}
 export const useConnectors = () => useApiQuery<ConnectorSummary[]>("connectors", "/api/v1/connectors");
 
 export function useConnectorRows(name: string | null, page: number, pageSize: number) {
