@@ -8,6 +8,7 @@ from pathlib import Path
 import arviz as az
 import numpy as np
 import pandas as pd
+import xarray as xr
 from pymc_extras.prior import Prior
 from pymc_marketing.mmm import GeometricAdstock, LogisticSaturation, MMM
 
@@ -17,8 +18,14 @@ PLAN_SUMMARY = {{PLAN_SUMMARY_LITERAL}}
 GENERATED_AT = {{GENERATED_AT_LITERAL}}
 MODEL_FILE = "mmm_model.nc"
 EVALUATION_FILE = "evaluation.json"
+from scipy.stats import chi2, pearsonr, shapiro
+
 MIN_ROWS = 20
 MIN_CHANNEL_SPEND = 0.01
+HDI_PROB = 0.90
+PERIOD_FREQUENCIES = ("all_time", "yearly", "monthly")
+RESAMPLE_RULES = {"yearly": "YE", "monthly": "ME"}
+WORST_RESIDUAL_COUNT = 5
 RHAT_LIMIT = 1.1
 RHAT_VARIABLES = (
     "intercept_contribution",
@@ -87,6 +94,159 @@ def load_frame():
     return frame
 
 
+def finite(value):
+    value = float(value)
+    return round(value, 6) if np.isfinite(value) else None
+
+
+def safe_metric(errors, name, compute):
+    try:
+        return compute()
+    except Exception as exc:
+        errors[name] = f"{type(exc).__name__}: {exc}"
+        return None
+
+
+def by_frequency(errors, name, compute):
+    return {f: safe_metric(errors, f"{name}.{f}", lambda: compute(f)) for f in PERIOD_FREQUENCIES}
+
+
+def labelled_summary(samples, dim="channel"):
+    """Posterior mean and 90% HDI per label; a list of periods when the samples carry a date dim."""
+    mean = samples.mean(dim=("chain", "draw"))
+    hdi = az.hdi(samples, prob=HDI_PROB)
+    values = {"mean": mean, "hdi_low_90": hdi.sel(ci_bound="lower"), "hdi_high_90": hdi.sel(ci_bound="upper")}
+    summary = {}
+    for label in mean[dim].values:
+        picked = {k: v.sel({dim: label}).values for k, v in values.items()}
+        if "date" in mean.dims:
+            periods = pd.to_datetime(mean["date"].values)
+            summary[str(label)] = [
+                {"period": period.date().isoformat(), **{k: finite(col[i]) for k, col in picked.items()}}
+                for i, period in enumerate(periods)
+            ]
+        else:
+            summary[str(label)] = {k: finite(v) for k, v in picked.items()}
+    return summary
+
+
+def spend_by_period(frame, date_col, channels, frequency):
+    spend = frame[channels].astype(float)
+    if frequency == "all_time":
+        return spend.sum()
+    spend.index = pd.to_datetime(frame[date_col])
+    return spend.resample(RESAMPLE_RULES[frequency]).sum()
+
+
+def incremental_over_spend(model, frame, date_col, channels, frequency):
+    contribution = model.incrementality.compute_incremental_contribution(frequency=frequency)
+    spend = spend_by_period(frame, date_col, channels, frequency)
+    if frequency == "all_time":
+        denominator = xr.DataArray(spend.reindex(channels).to_numpy(), dims=("channel",), coords={"channel": channels})
+    else:
+        dates = contribution["date"].values
+        denominator = xr.DataArray(
+            spend.reindex(pd.to_datetime(dates))[channels].to_numpy(),
+            dims=("date", "channel"),
+            coords={"date": dates, "channel": channels},
+        )
+    return labelled_summary(contribution / denominator.where(denominator > 0))
+
+
+def fit_metrics(model, frame, date_col, target):
+    predictive = model.idata["posterior_predictive"]["y_original_scale"]
+    dates = pd.to_datetime(predictive["date"].values)
+    actual_all = pd.Series(frame[target].to_numpy(dtype=float), index=pd.to_datetime(frame[date_col]))
+    actual_all = actual_all.reindex(dates).to_numpy()
+    keep = np.isfinite(actual_all)
+    actual = actual_all[keep]
+    kept_dates = dates[keep]
+    draws = predictive.transpose("chain", "draw", "date").values.reshape(-1, len(dates))[:, keep]
+    pred = draws.mean(axis=0)
+
+    resid = actual - pred
+    total_actual = actual.sum()
+    ss_tot = np.sum((actual - actual.mean()) ** 2)
+    positive = actual > 0
+    lo94, hi94 = np.quantile(draws, [0.03, 0.97], axis=0)
+    lo50, hi50 = np.quantile(draws, [0.25, 0.75], axis=0)
+    shapiro_stat, shapiro_p = shapiro(resid)
+    trend_corr, trend_p = pearsonr(np.arange(len(resid)), resid)
+
+    squared = resid**2
+    bp_exog = np.column_stack([np.ones(len(pred)), pred])
+    bp_coef = np.linalg.lstsq(bp_exog, squared, rcond=None)[0]
+    bp_sse = np.sum((squared - bp_exog @ bp_coef) ** 2)
+    bp_sst = np.sum((squared - squared.mean()) ** 2)
+    bp_r2 = max(1 - bp_sse / bp_sst, 0.0) if bp_sst > 0 else 0.0
+    bp_lm = len(resid) * bp_r2
+
+    worst = np.argsort(-np.abs(resid))[:WORST_RESIDUAL_COUNT]
+    return {
+        "observations": int(len(actual)),
+        "r2": finite(1 - np.sum(squared) / ss_tot) if ss_tot > 0 else None,
+        "mae": finite(np.mean(np.abs(resid))),
+        "rmse": finite(np.sqrt(np.mean(squared))),
+        "bias": finite(np.mean(resid)),
+        "mape_pct": finite(np.mean(np.abs(resid[positive] / actual[positive])) * 100) if positive.any() else None,
+        "wmape_pct": finite(np.sum(np.abs(resid)) / total_actual * 100) if total_actual > 0 else None,
+        "hdi94_coverage_pct": finite(np.mean((actual >= lo94) & (actual <= hi94)) * 100),
+        "hdi50_coverage_pct": finite(np.mean((actual >= lo50) & (actual <= hi50)) * 100),
+        "durbin_watson": finite(np.sum(np.diff(resid) ** 2) / np.sum(squared)),
+        "shapiro_wilk_stat": finite(shapiro_stat),
+        "shapiro_wilk_p": finite(shapiro_p),
+        "residual_trend_corr": finite(trend_corr),
+        "residual_trend_p": finite(trend_p),
+        "breusch_pagan_lm": finite(bp_lm),
+        "breusch_pagan_p": finite(chi2.sf(bp_lm, df=1)),
+        "worst_residuals": [
+            {
+                "date": kept_dates[i].date().isoformat(),
+                "actual": finite(actual[i]),
+                "predicted": finite(pred[i]),
+                "error_pct": finite(resid[i] / actual[i] * 100) if actual[i] > 0 else None,
+            }
+            for i in worst
+        ],
+    }
+
+
+def contribution_totals(post, var, dim=None):
+    data = post[var].mean(dim=("chain", "draw"))
+    if dim is None:
+        return {"total": float(data.sum())}
+    totals = data.sum(dim=[d for d in data.dims if d != dim]).to_series()
+    return {str(name): float(value) for name, value in totals.items()}
+
+
+def contribution_summary(model):
+    post = model.idata["posterior"]
+    predicted = float(post["y_original_scale"].mean(dim=("chain", "draw")).sum())
+
+    def with_share(entry):
+        return {"total": finite(entry["total"]), "share_pct": finite(entry["total"] / predicted * 100) if predicted else None}
+
+    def labelled(var, dim):
+        return {name: with_share({"total": value}) for name, value in contribution_totals(post, var, dim).items()}
+
+    return {
+        "predicted_total": finite(predicted),
+        "channels": labelled("channel_contribution_original_scale", "channel"),
+        "controls": labelled("control_contribution_original_scale", "control"),
+        "intercept": with_share(contribution_totals(post, "intercept_contribution_original_scale")),
+        "yearly_seasonality": with_share(contribution_totals(post, "yearly_seasonality_contribution_original_scale")),
+    }
+
+
+def transformation_summary(post):
+    return {
+        "adstock_alpha": labelled_summary(post["adstock_alpha"]),
+        "saturation_lam": labelled_summary(post["saturation_lam"]),
+        "saturation_beta": labelled_summary(post["saturation_beta"]),
+        "gamma_control": labelled_summary(post["gamma_control"], dim="control"),
+    }
+
+
 def run():
     date_col = CONFIG["date_column"]
     target = CONFIG["target_column"]
@@ -152,10 +312,12 @@ def run():
     max_rhat = float(az.summary(data=model.idata, var_names=names)["r_hat"].max())
     progress("diagnostics", 85, f"{divergences} divergences, max R-hat {max_rhat:.3f}")
 
-    if divergences == 0:
-        progress("posterior_predictive", 90, "Sampling posterior predictive")
-        model.sample_posterior_predictive(X, random_seed=np.random.default_rng(sampling["random_seed"]))
+    progress("posterior_predictive", 90, "Sampling posterior predictive")
+    model.sample_posterior_predictive(X, random_seed=np.random.default_rng(sampling["random_seed"]))
 
+    errors = {}
+    progress("metrics", 92, "Computing fit, contribution and ROI metrics")
+    post = model.idata.posterior
     evaluation = {
         "status": "success",
         "plan": PLAN_SUMMARY,
@@ -170,8 +332,20 @@ def run():
         "max_rhat": round(max_rhat, 4),
         "rhat_limit": RHAT_LIMIT,
         "rhat_ok": max_rhat <= RHAT_LIMIT,
+        "sampling": dict(sampling),
+        "fit": safe_metric(errors, "fit", lambda: fit_metrics(model, frame, date_col, target)),
+        "contributions": safe_metric(errors, "contributions", lambda: contribution_summary(model)),
+        "roas": by_frequency(errors, "roas", lambda f: labelled_summary(model.incrementality.contribution_over_spend(frequency=f))),
+        "incremental_roas": by_frequency(
+            errors, "incremental_roas", lambda f: incremental_over_spend(model, frame, date_col, channels, f)
+        ),
+        "marginal_roas": by_frequency(
+            errors, "marginal_roas", lambda f: labelled_summary(model.incrementality.marginal_contribution_over_spend(frequency=f))
+        ),
+        "transformations": safe_metric(errors, "transformations", lambda: transformation_summary(post)),
+        "metric_errors": errors,
     }
-    (RUN_DIR / EVALUATION_FILE).write_text(json.dumps(evaluation, indent=2), encoding="utf-8")
+    (RUN_DIR / EVALUATION_FILE).write_text(json.dumps(evaluation, indent=2, default=str), encoding="utf-8")
 
     model_path = RUN_DIR / MODEL_FILE
     if model_path.exists():

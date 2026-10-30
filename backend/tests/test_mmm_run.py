@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import json
 import os
 import sys
 from datetime import date, timedelta
@@ -324,4 +325,15 @@ def test_generated_script_trains_and_fills_the_run_folder(tmp_path: Path):
     assert outcome.code == 0, outcome.tail
     assert outcome.result and outcome.result["status"] == "success"
     assert missing_outputs(tmp_path) == []
+
+    evaluation = json.loads((tmp_path / "evaluation.json").read_text(encoding="utf-8"))
+    assert evaluation["metric_errors"] == {}, evaluation["metric_errors"]
+    fit_keys = {"r2", "mae", "rmse", "bias", "mape_pct", "wmape_pct", "hdi94_coverage_pct", "hdi50_coverage_pct",
+                "durbin_watson", "shapiro_wilk_p", "residual_trend_p", "breusch_pagan_p", "worst_residuals"}
+    assert fit_keys <= evaluation["fit"].keys()
+    assert set(evaluation["channels"]) == set(evaluation["contributions"]["channels"])
+    for block in ("roas", "incremental_roas", "marginal_roas"):
+        assert set(evaluation[block]) == {"all_time", "yearly", "monthly"}
+        assert set(evaluation[block]["all_time"]) == set(evaluation["channels"])
+    assert set(evaluation["transformations"]["saturation_lam"]) == set(evaluation["channels"])
 
