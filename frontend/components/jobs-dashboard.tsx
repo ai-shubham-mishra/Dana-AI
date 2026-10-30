@@ -533,7 +533,12 @@ export function JobsDashboard() {
           />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_26rem] lg:items-start">
+        <div
+          className={cn(
+            "grid gap-6 lg:items-start",
+            selectedId ? "lg:grid-cols-[minmax(0,1fr)_26rem]" : "grid-cols-1",
+          )}
+        >
           <section className="min-w-0 rounded-xl border border-border bg-card shadow-sm">
             <div
               className={cn(
@@ -576,7 +581,7 @@ export function JobsDashboard() {
             {body}
           </section>
 
-          {selectedId ? (
+          {selectedId && (
             <JobBlade
               key={selectedId}
               jobId={selectedId}
@@ -586,10 +591,6 @@ export function JobsDashboard() {
               onNext={selectedIndex >= 0 && selectedIndex < visible.length - 1 ? () => goTo(1) : null}
               onClose={() => setSelectedId(null)}
             />
-          ) : (
-            <aside className="hidden min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground lg:flex lg:sticky lg:top-6">
-              Select a job to see its progress, parameters and metrics.
-            </aside>
           )}
         </div>
       </div>
