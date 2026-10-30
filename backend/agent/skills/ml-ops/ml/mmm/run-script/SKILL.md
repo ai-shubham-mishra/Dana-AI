@@ -1,5 +1,5 @@
 ---
-name: mmm-run-script
+name: run-script
 description: How the MMM training script is generated on the fly from a template for each run, which placeholders it fills, and what the generated script must emit so the platform can track progress.
 ---
 

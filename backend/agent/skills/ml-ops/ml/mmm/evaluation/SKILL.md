@@ -1,5 +1,5 @@
 ---
-name: mmm-evaluation
+name: evaluation
 description: How to read an MMM run's evaluation - sampler health (divergences, R-hat), data coverage, excluded channels - and what to tell the user when a run passes or fails.
 ---
 
