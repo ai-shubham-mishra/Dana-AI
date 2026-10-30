@@ -71,6 +71,7 @@ export function useJob(jobId: string | null) {
     queryKey: ["job", token, jobId],
     queryFn: () => apiGet<JobDetail>(`/api/v1/jobs/${jobId}`, token),
     enabled: Boolean(token && jobId),
+    placeholderData: (previous) => previous,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status === "queued" || status === "running" ? POLL_INTERVAL_MS : false;
