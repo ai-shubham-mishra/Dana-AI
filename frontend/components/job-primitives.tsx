@@ -20,6 +20,7 @@ export function JobProgressBar({ percent, status, className }: { percent: number
     >
       <motion.div
         className={cn("absolute inset-y-0 left-0 overflow-hidden rounded-full transition-colors duration-500", progressTone(status, value))}
+        style={isActive(status) ? { backgroundImage: "linear-gradient(90deg, var(--background), var(--primary))" } : undefined}
         initial={false}
         animate={{ width: `${value}%` }}
         transition={{ type: "spring", stiffness: 120, damping: 24 }}
@@ -50,7 +51,7 @@ export function JobTimeline({ events, status, percent }: { events: JobEvent[]; s
   const newestFirst = events.map((event, index) => ({ event, index })).reverse();
 
   return (
-    <ol className="space-y-3 border-l border-border pl-4">
+    <ol className="ml-2 space-y-3 border-l border-border pl-4">
       {newestFirst.map(({ event, index }) => {
         const isLatest = index === events.length - 1;
         return (

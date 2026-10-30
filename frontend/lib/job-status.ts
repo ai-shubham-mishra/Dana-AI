@@ -14,10 +14,10 @@ export function isActive(status: JobStatus): boolean {
   return ACTIVE_STATUSES.has(status);
 }
 
-// Light brand purple at 0%, purple while running, green on success, red on failure.
+// Light-mode cream at 0%, purple while running, teal on success, red on failure.
 export function progressTone(status: JobStatus, percent: number): string {
   if (status === "failed") return "bg-destructive";
   if (status === "succeeded") return "bg-success";
   if (status === "cancelled") return "bg-muted-foreground";
-  return percent > 0 ? "bg-primary" : "bg-brand-purple";
+  return percent > 0 ? "bg-primary" : "bg-background";
 }
