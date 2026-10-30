@@ -33,6 +33,19 @@ class StartMmmRunInput(ToolInput):
     rationale: str = Field(default="", description="Short data-scientist reasoning for these choices, shown to the user on approval.")
 
 
+def _scope_text(sources: Any) -> str:
+    if not isinstance(sources, list) or not sources:
+        return "no sources listed"
+    parts = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        filters = source.get("filters") or {}
+        detail = ", ".join(f"{column}={value}" for column, value in filters.items()) or "no filter"
+        parts.append(f"{source.get('table')} ({detail})")
+    return "; ".join(parts) or "no sources listed"
+
+
 class StartMmmRunTool(BaseTool):
     name: str = START_MMM_RUN_TOOL
     description: str = (
@@ -40,7 +53,7 @@ class StartMmmRunTool(BaseTool):
         "generated for this run. A human must approve, edit, or reject the plan before this runs."
     )
     allowed_decisions = ["approve", "edit", "reject"]
-    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls} from {date_start} to {date_end}?"
+    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return StartMmmRunInput
@@ -49,6 +62,7 @@ class StartMmmRunTool(BaseTool):
         values = dict(args)
         if not values.get("controls"):
             values["controls"] = f"none ({values.get('controls_reason') or 'no reason given'})"
+        values["scope"] = _scope_text(values.get("sources"))
         return super().approval_text(values)
 
     async def execute(self, **kwargs: Any) -> ToolOutput:

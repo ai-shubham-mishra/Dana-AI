@@ -41,7 +41,7 @@ def build_config(plan: MMMPlan, defaults: dict[str, Any] | None = None) -> dict[
     validation = base["validation"]
     if "holdout_periods" in overrides:
         validation["holdout_periods"] = overrides["holdout_periods"]
-    return {
+    config = {
         "date_column": DATE_COLUMN,
         "target_column": plan.kpi,
         "channels": sorted(plan.channels),
@@ -50,6 +50,10 @@ def build_config(plan: MMMPlan, defaults: dict[str, Any] | None = None) -> dict[
         "sampling": sampling,
         "validation": validation,
     }
+    scope = [{"table": source.table, "filters": source.filters} for source in plan.sources if source.filters]
+    if scope:
+        config["data_scope"] = scope
+    return config
 
 
 def dump_config(config: dict[str, Any]) -> str:

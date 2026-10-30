@@ -17,6 +17,7 @@ from agent.tools.system_ops.calendar.get_calendar_events import GetCalendarEvent
 from agent.tools.system_ops.calendar.get_current_date import GetCurrentDateTool
 from agent.tools.system_ops.calendar.resolve_date_range import ResolveDateRangeTool
 from agent.tools.system_ops.connectors.list_channels_within_connector import ListChannelsWithinConnectorTool
+from agent.tools.system_ops.connectors.list_connector_column_values import ListConnectorColumnValuesTool
 from agent.tools.system_ops.connectors.list_connectors import ListConnectorsTool
 from agent.tools.system_ops.hitl.ask_user import AskUserTool
 from agent.tools.system_ops.utilities.calculate import CalculateTool
@@ -51,6 +52,7 @@ def build_tools(connector_pool=None, datasets_schema: str = "datasets") -> list:
         *STATIC_TOOLS,
         ListConnectorsTool(**connector_kwargs),
         ListChannelsWithinConnectorTool(**connector_kwargs),
+        ListConnectorColumnValuesTool(**connector_kwargs),
         ListChannelsTool(**connector_kwargs),
         QueryDatabaseTool(**connector_kwargs),
     ]

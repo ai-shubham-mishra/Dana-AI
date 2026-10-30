@@ -141,14 +141,14 @@ ISO_DATE_PREFIX = r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
 MAX_DATE_COLUMNS = 5
 
 
+def is_date_column(column: dict[str, str]) -> bool:
+    if column["data_type"] in DATE_TYPES:
+        return True
+    return column["data_type"] in TEXT_TYPES and bool(DATE_NAME_HINT.search(column["name"]))
+
+
 def date_candidates(columns: list[dict[str, str]]) -> list[dict[str, str]]:
-    candidates = [
-        column
-        for column in columns
-        if column["data_type"] in DATE_TYPES
-        or (column["data_type"] in TEXT_TYPES and DATE_NAME_HINT.search(column["name"]))
-    ]
-    return candidates[:MAX_DATE_COLUMNS]
+    return [column for column in columns if is_date_column(column)][:MAX_DATE_COLUMNS]
 
 
 def _day_expression(column: dict[str, str]) -> sql.Composable:
@@ -220,6 +220,7 @@ async def get_daily_metric_rows(
     metric_columns: list[str],
     start: date,
     end: date,
+    filters: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
     day = sql.SQL("CAST({} AS date)").format(sql.Identifier(date_column))
@@ -227,17 +228,23 @@ async def get_daily_metric_rows(
         sql.SQL("SUM({}) AS {}").format(sql.Identifier(column), sql.Identifier(f"_m{index}"))
         for index, column in enumerate(metric_columns)
     ]
+    conditions = [sql.SQL("{org}::text = %s").format(org=sql.Identifier(ORG_COLUMN))]
+    params: list[Any] = [org_id]
+    for column, value in (filters or {}).items():
+        conditions.append(sql.SQL("{} = %s").format(sql.Identifier(column)))
+        params.append(value)
+    conditions.append(sql.SQL("{day} BETWEEN %s AND %s").format(day=day))
+    params.extend([start, end])
     query = sql.SQL(
-        "SELECT {day} AS _day, {aggregates} FROM {relation} "
-        "WHERE {org}::text = %s AND {day} BETWEEN %s AND %s GROUP BY 1 ORDER BY 1"
+        "SELECT {day} AS _day, {aggregates} FROM {relation} WHERE {conditions} GROUP BY 1 ORDER BY 1"
     ).format(
         day=day,
         aggregates=sql.SQL(", ").join(aggregates),
         relation=relation,
-        org=sql.Identifier(ORG_COLUMN),
+        conditions=sql.SQL(" AND ").join(conditions),
     )
     async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(query, (org_id, start, end))
+        await cur.execute(query, tuple(params))
         rows = await cur.fetchall()
     return [
         {
@@ -246,3 +253,34 @@ async def get_daily_metric_rows(
         }
         for row in rows
     ]
+
+
+async def get_column_values(
+    pool: AsyncConnectionPool,
+    schema: str,
+    table: str,
+    org_id: str,
+    column: str,
+    date_column: dict[str, str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
+    params: list[Any] = []
+    if date_column["data_type"] not in DATE_TYPES:
+        params.append(ISO_DATE_PREFIX)
+    params.extend([org_id, limit])
+    query = sql.SQL(
+        "SELECT _value AS value, count(*) AS row_count, min(_day) AS first_date, max(_day) AS last_date "
+        "FROM (SELECT {value} AS _value, {day} AS _day FROM {relation} "
+        "WHERE {org}::text = %s AND {value} IS NOT NULL) AS _rows "
+        "GROUP BY 1 ORDER BY row_count DESC, value LIMIT %s"
+    ).format(
+        value=sql.Identifier(column),
+        day=_day_expression(date_column),
+        relation=relation,
+        org=sql.Identifier(ORG_COLUMN),
+    )
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, tuple(params))
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]
