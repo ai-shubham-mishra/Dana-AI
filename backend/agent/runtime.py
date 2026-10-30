@@ -40,8 +40,11 @@ def _text_of(content: Any) -> str:
     )
 
 
+AGENT_RECURSION_LIMIT = 150
+
+
 def _config(chat_id: str) -> dict:
-    return {"configurable": {"thread_id": chat_id}}
+    return {"configurable": {"thread_id": chat_id}, "recursion_limit": AGENT_RECURSION_LIMIT}
 
 
 def approval_payload(interrupt: Any) -> dict:

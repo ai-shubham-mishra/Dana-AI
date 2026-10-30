@@ -192,7 +192,7 @@ function AssistantTurn({ parts }: { parts: TurnPart[] }) {
       {parts.map(
         (part) =>
           part.answer && (
-            <Markdown key={part.id} animateWords={part.live}>
+            <Markdown key={part.id} animateWords={part.live} className={part.live ? "text-muted-foreground" : undefined}>
               {part.answer}
             </Markdown>
           ),
