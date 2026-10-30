@@ -8,13 +8,18 @@ from azure.storage.blob import BlobServiceClient
 from fastapi.testclient import TestClient
 
 from api.main import create_app
-from config.settings import BACKEND_ROOT
+from config.settings import BACKEND_ROOT, Settings
 from integrations.training.mmm.request import RequestError, load_dataset_spec, validate_request
 from tests.test_api import ORG_A, USER_1, USER_2, auth, make_settings, member, mint, raw_db, settings, static_secret  # noqa: F401
 
 HEADERS = auth(mint())
 MMM_DIR = BACKEND_ROOT / "resources" / "training" / "mmm"
 SPEC = load_dataset_spec(MMM_DIR / "mmm_demo.yaml")
+
+
+def test_default_run_folder_is_outside_reload_watched_tree():
+    default = Settings.model_fields["training_output_dir"].default
+    assert not default.is_relative_to(BACKEND_ROOT)
 
 FAKE_TRAINER = """
 import json, pathlib, sys

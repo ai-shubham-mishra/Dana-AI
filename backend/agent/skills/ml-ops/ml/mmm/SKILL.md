@@ -29,7 +29,7 @@ For every run, the platform does the following. Do not bypass it.
 - Executes `train.py` in a sandboxed subprocess inside the run folder. The sandbox gets a minimal environment with no secrets.
 - Writes `evaluation.json` and `mmm_model.nc` into the same run folder.
 
-The run folder is `var/training/<job_id>/` and always holds all six files: `dataset.csv`, `dataset_log.json`, `config.yml`, `train.py`, `evaluation.json`, `mmm_model.nc`. A run is marked successful only when all six exist.
+The run folder is `<training output dir>/<job_id>/` (default `~/.dana-ai/training/`) and always holds all six files: `dataset.csv`, `dataset_log.json`, `config.yml`, `train.py`, `evaluation.json`, `mmm_model.nc`. A run is marked successful only when all six exist.
 
 ## Boundaries
 
