@@ -1,5 +1,5 @@
 ---
-name: mmm-config-reference
+name: config-reference
 description: Reference for every MMM training setting - adstock, seasonality, priors, sampling - with the defaults and which ones the agent may override in a run request.
 ---
 

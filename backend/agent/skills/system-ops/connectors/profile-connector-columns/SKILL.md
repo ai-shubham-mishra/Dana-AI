@@ -12,4 +12,4 @@ Call this with `connector` and an explicit list of `columns` (up to 20) once you
 - `unreadable_samples`: up to five values that could not be read.
 - `recommendation`: one of numeric, text holding numbers, mixed, mostly non-numeric, or empty.
 
-It is read-only and needs no approval. Use its recommendation as a starting point and check the samples before you decide. A text column that holds numbers must be declared in `preparation.text_to_numeric` when you call `start_mmm_run`. See the `mmm-data-preparation` skill for the full decision rules.
+It is read-only and needs no approval. Use its recommendation as a starting point and check the samples before you decide. A text column that holds numbers must be declared in `preparation.text_to_numeric` when you call `start_mmm_run`. See the `data-preparation` skill for the full decision rules.

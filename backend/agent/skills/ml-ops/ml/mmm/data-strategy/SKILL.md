@@ -1,5 +1,5 @@
 ---
-name: mmm-data-strategy
+name: data-strategy
 description: How to turn a client's connector tables into an MMM dataset - choosing the KPI, channel spend, controls, date window, and aggregation, and checking the result before training.
 ---
 

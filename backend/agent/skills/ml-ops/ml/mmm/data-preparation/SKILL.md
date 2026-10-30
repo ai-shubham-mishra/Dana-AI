@@ -1,5 +1,5 @@
 ---
-name: mmm-data-preparation
+name: data-preparation
 description: How to make a client's connector columns ready for MMM training - reading text as numbers, filling blanks, calendar and holiday features, lags and rolling means - and when to ask the user instead.
 ---
 
