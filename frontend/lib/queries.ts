@@ -7,6 +7,7 @@ import { useAccessToken } from "./auth";
 import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, JobDetail, JobSummary, Me, PendingApproval } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
+const CHATS_REFRESH_MS = 10_000;
 
 function useApiQuery<T>(key: string, path: string, pollWhile?: (data: T) => boolean) {
   const token = useAccessToken();
@@ -22,7 +23,17 @@ function useApiQuery<T>(key: string, path: string, pollWhile?: (data: T) => bool
 const hasActiveJob = (jobs: JobSummary[]) => jobs.some((job) => job.status === "queued" || job.status === "running");
 
 export const useMe = () => useApiQuery<Me>("me", "/api/v1/me");
-export const useChats = () => useApiQuery<ChatSummary[]>("chats", "/api/v1/chats");
+export function useChats() {
+  const token = useAccessToken();
+  return useQuery<ChatSummary[], ApiError>({
+    queryKey: ["chats", token],
+    queryFn: () => apiGet<ChatSummary[]>("/api/v1/chats", token),
+    enabled: Boolean(token),
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+    refetchInterval: CHATS_REFRESH_MS,
+    refetchOnWindowFocus: true,
+  });
+}
 export const useJobs = () => useApiQuery<JobSummary[]>("jobs", "/api/v1/jobs", hasActiveJob);
 export const useConnectors = () => useApiQuery<ConnectorSummary[]>("connectors", "/api/v1/connectors");
 
