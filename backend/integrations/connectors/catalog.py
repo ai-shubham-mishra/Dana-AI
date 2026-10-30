@@ -1,4 +1,5 @@
 import math
+import re
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
@@ -131,6 +132,72 @@ async def get_connector_columns(pool: AsyncConnectionPool, schema: str, table: s
     if not columns:
         return None
     return [{"name": column["column_name"], "data_type": column["data_type"]} for column in columns]
+
+
+DATE_TYPES = frozenset({"date", "timestamp without time zone", "timestamp with time zone"})
+TEXT_TYPES = frozenset({"text", "character varying", "character"})
+DATE_NAME_HINT = re.compile(r"date|week|day|month|period", re.IGNORECASE)
+ISO_DATE_PREFIX = r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+MAX_DATE_COLUMNS = 5
+
+
+def date_candidates(columns: list[dict[str, str]]) -> list[dict[str, str]]:
+    candidates = [
+        column
+        for column in columns
+        if column["data_type"] in DATE_TYPES
+        or (column["data_type"] in TEXT_TYPES and DATE_NAME_HINT.search(column["name"]))
+    ]
+    return candidates[:MAX_DATE_COLUMNS]
+
+
+def _day_expression(column: dict[str, str]) -> sql.Composable:
+    identifier = sql.Identifier(column["name"])
+    if column["data_type"] == "date":
+        return identifier
+    if column["data_type"] in DATE_TYPES:
+        return sql.SQL("CAST({} AS date)").format(identifier)
+    return sql.SQL("CAST(substring({}::text from %s) AS date)").format(identifier)
+
+
+async def get_date_ranges(
+    pool: AsyncConnectionPool, schema: str, table: str, org_id: str | None, columns: list[dict[str, str]]
+) -> dict[str, dict[str, Any]]:
+    candidates = date_candidates(columns)
+    if not candidates:
+        return {}
+    relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
+    days = []
+    aggregates = []
+    params: list[Any] = []
+    for index, column in enumerate(candidates):
+        days.append(sql.SQL("{} AS _d{}").format(_day_expression(column), sql.SQL(str(index))))
+        if column["data_type"] not in DATE_TYPES:
+            params.append(ISO_DATE_PREFIX)
+        aggregates.append(sql.SQL("MIN(_d{i}) AS _min{i}, MAX(_d{i}) AS _max{i}, COUNT(_d{i}) AS _n{i}").format(i=index))
+    scope = sql.SQL(" WHERE {}::text = %s").format(sql.Identifier(ORG_COLUMN)) if org_id is not None else sql.SQL("")
+    if org_id is not None:
+        params.append(org_id)
+    query = sql.SQL("SELECT {aggregates} FROM (SELECT {days} FROM {relation}{scope}) AS _rows").format(
+        aggregates=sql.SQL(", ").join(aggregates),
+        days=sql.SQL(", ").join(days),
+        relation=relation,
+        scope=scope,
+    )
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, tuple(params))
+        row = await cur.fetchone()
+    ranges: dict[str, dict[str, Any]] = {}
+    for index, column in enumerate(candidates):
+        if not row[f"_n{index}"]:
+            continue
+        ranges[column["name"]] = {
+            "data_type": column["data_type"],
+            "earliest": row[f"_min{index}"].isoformat(),
+            "latest": row[f"_max{index}"].isoformat(),
+            "rows_with_date": int(row[f"_n{index}"]),
+        }
+    return ranges
 
 
 async def count_org_rows(pool: AsyncConnectionPool, schema: str, table: str, org_id: str) -> int:

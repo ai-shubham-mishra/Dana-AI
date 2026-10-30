@@ -1,9 +1,10 @@
 from collections.abc import Iterable
 from typing import Any
 
+import psycopg
 from psycopg_pool import AsyncConnectionPool
 
-from integrations.connectors.catalog import ORG_COLUMN, count_org_rows, get_connector_columns
+from integrations.connectors.catalog import ORG_COLUMN, count_org_rows, get_connector_columns, get_date_ranges
 
 # Channel columns are named <Channel>_<metric>, e.g. GAds-PMax_spend or TV_GRP.
 CHANNEL_METRICS = frozenset({"spend", "impressions", "impr", "clicks", "views", "grp", "reach"})
@@ -37,12 +38,29 @@ async def describe_connector(
         return None
     names = [column["name"] for column in columns]
     org_scoped = ORG_COLUMN in names
+    try:
+        date_ranges = await get_date_ranges(pool, schema, connector, org_id if org_scoped else None, columns)
+    except psycopg.DataError:
+        date_ranges = {}
     return {
         "connector": connector,
         "org_scoped": org_scoped,
         "org_rows": await count_org_rows(pool, schema, connector, org_id) if org_scoped else None,
         "channels": derive_channels(names),
+        "date_ranges": date_ranges,
     }
+
+
+def format_date_ranges(date_ranges: dict[str, dict[str, Any]]) -> list[str]:
+    if not date_ranges:
+        return ["No date columns with values were found in this connector."]
+    lines = ["Date columns (earliest to latest value for this organization):"]
+    for column, span in date_ranges.items():
+        lines.append(
+            f"- {column} ({span['data_type']}): {span['earliest']} to {span['latest']}, "
+            f"{span['rows_with_date']} rows with a date"
+        )
+    return lines
 
 
 def format_channels(described: dict[str, Any]) -> str:
@@ -52,6 +70,7 @@ def format_channels(described: dict[str, Any]) -> str:
             lines.append("This organization has no rows in this connector, so it cannot be modelled from it.")
     else:
         lines = [f"Connector {described['connector']} is a shared table with no org_id column."]
+    lines.extend(format_date_ranges(described["date_ranges"]))
     channels = described["channels"]
     if not channels:
         lines.append(

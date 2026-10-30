@@ -18,6 +18,7 @@ class StartTrainingJobTool(BaseTool):
     name: str = START_TRAINING_JOB_TOOL
     description: str = "Start a model training job. A human must approve, edit, or reject the request before this runs."
     allowed_decisions = ["approve", "edit", "reject"]
+    approval_summary = "Start a {model} training job for KPI {kpi} on channels {channels} over {date_range}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return StartTrainingJobInput
