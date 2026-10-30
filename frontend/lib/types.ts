@@ -17,6 +17,7 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   thinking?: string | null;
+  todos?: TodoItem[];
   created_at: string;
 };
 

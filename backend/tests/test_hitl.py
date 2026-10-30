@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from api.main import create_app
 from tests.test_api import ORG_A, USER_2, auth, make_settings, member, mint, raw_db, settings, static_secret  # noqa: F401
-from tests.test_chat_stream import REPLY, new_chat, parse_sse, scripted_factory
+from tests.test_chat_stream import REPLY, TODO_CALL, new_chat, parse_sse, scripted_factory
 from tests.test_training import fake_trainer
 
 HEADERS = auth(mint())
@@ -241,3 +241,17 @@ def test_typed_answer_without_options_falls_back_to_text(open_client):
     send(client, chat_id)
     assert resume(client, chat_id, [{"type": "respond", "message": "Revenue"}]).status_code == 200
     assert tool_content(client, chat_id, "call-typed-5") == "Revenue"
+
+
+def test_plan_survives_a_pause_and_settles_after_resume(open_client, raw_db):
+    client = open_client([TODO_CALL, ASK_CALL, REPLY])
+    chat_id = new_chat(client, HEADERS)
+    send(client, chat_id)
+    resume(client, chat_id, [{"type": "respond", "message": "Revenue"}])
+    segments = list(
+        raw_db.messages.find({"chat_id": chat_id, "role": "assistant", "todos": {"$ne": []}}).sort("created_at", 1)
+    )
+    assert [m["todos"] for m in segments] == [
+        [{"content": "Collect KPI", "status": "in_progress"}],
+        [{"content": "Collect KPI", "status": "completed"}],
+    ]

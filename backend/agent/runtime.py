@@ -62,6 +62,12 @@ def approval_payload(interrupt: Any) -> dict:
     return {"interrupt_id": interrupt.id, "actions": actions}
 
 
+async def current_todos(agent: Any, chat_id: str) -> list[dict]:
+    snapshot = await agent.aget_state(_config(chat_id))
+    todos = (snapshot.values or {}).get("todos")
+    return todos if isinstance(todos, list) else []
+
+
 async def pending_approval(agent: Any, chat_id: str) -> dict | None:
     snapshot = await agent.aget_state(_config(chat_id))
     for interrupt in snapshot.interrupts:

@@ -161,3 +161,23 @@ def test_step_limit_emits_friendly_error_instead_of_generic_failure(chat_client,
     errors = [data["message"] for name, data in parse_sse(res.text) if name == "error"]
     assert errors and "ran out of steps" in errors[0]
     assert "run failed" not in errors[0]
+
+
+def test_clean_turn_saves_settled_plan_and_returns_it_on_reload(chat_client, member, raw_db):
+    headers = auth(mint())
+    chat_id = new_chat(chat_client, headers)
+    chat_client.post(f"/api/v1/chats/{chat_id}/messages", json={"content": "Plan an MMM"}, headers=headers)
+
+    stored = raw_db.messages.find_one({"chat_id": chat_id, "role": "assistant", "todos": {"$ne": []}})
+    assert stored["todos"] == [{"content": "Collect KPI", "status": "completed"}]
+
+    messages = chat_client.get(f"/api/v1/chats/{chat_id}/messages", headers=headers).json()
+    assert messages[-1]["todos"] == [{"content": "Collect KPI", "status": "completed"}]
+
+
+def test_saved_plan_keeps_in_progress_while_paused_and_settles_on_finish():
+    from api.routes.chats import saved_plan
+
+    todos = [{"content": "A", "status": "in_progress"}, {"content": "B", "status": "pending"}, "junk"]
+    assert saved_plan(todos, paused=True) == [{"content": "A", "status": "in_progress"}, {"content": "B", "status": "pending"}]
+    assert saved_plan(todos, paused=False) == [{"content": "A", "status": "completed"}, {"content": "B", "status": "pending"}]
