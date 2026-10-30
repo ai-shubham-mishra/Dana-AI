@@ -59,7 +59,7 @@ def test_lists_stored_values_with_counts_and_coverage(monkeypatch):
     output = run_tool({"connector": "google_ads", "column": "country", "date_column": "date"})
     assert "2 values stored in 'google_ads.country':" in output
     assert "- 'DE': 365 rows, 2024-01-01 to 2024-12-31" in output
-    assert seen == [("google_ads", ORG_A, "country", "date", 51)]
+    assert seen == [("google_ads", ORG_A, "country", {"name": "date", "data_type": "date"}, 51)]
 
 
 def test_marks_the_list_as_top_values_when_truncated(monkeypatch):
@@ -76,6 +76,44 @@ def test_reports_when_the_column_has_no_values(monkeypatch):
     scoped()
     output = run_tool({"connector": "google_ads", "column": "country", "date_column": "date"})
     assert "No values are stored in 'country' for this org" in output
+
+
+def test_accepts_text_date_columns_like_week(monkeypatch):
+    seen = []
+    columns = [*COLUMNS, {"name": "week", "data_type": "text"}]
+    patch_catalog(monkeypatch, columns=columns, rows=[value_row("CH", 250)], seen=seen)
+    scoped()
+    output = run_tool({"connector": "google_ads", "column": "country", "date_column": "week"})
+    assert "stored in 'google_ads.country':" in output
+    assert "- 'CH': 250 rows" in output
+    assert seen == [("google_ads", ORG_A, "country", {"name": "week", "data_type": "text"}, 51)]
+
+
+class CapturingDB(FakeDB):
+    def answer(self, text, params):
+        self.queries.append((text, params))
+        return []
+
+
+def test_text_date_column_is_cast_by_iso_prefix_before_grouping():
+    db = CapturingDB({})
+    asyncio.run(
+        catalog.get_column_values(
+            FakePool(db), "datasets", "sheet_x", ORG_A, "country", {"name": "week", "data_type": "text"}, 5
+        )
+    )
+    text, params = db.queries[-1]
+    assert "substring(" in text and "AS _rows" in text and "GROUP BY 1" in text
+    assert params == (catalog.ISO_DATE_PREFIX, ORG_A, 5)
+
+
+def test_native_date_column_needs_no_text_cast_param():
+    db = CapturingDB({})
+    asyncio.run(
+        catalog.get_column_values(FakePool(db), "datasets", "sheet_x", ORG_A, "country", {"name": "date", "data_type": "date"}, 5)
+    )
+    _, params = db.queries[-1]
+    assert params == (ORG_A, 5)
 
 
 def test_refuses_missing_or_non_text_columns(monkeypatch):

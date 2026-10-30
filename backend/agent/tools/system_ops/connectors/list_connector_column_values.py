@@ -41,11 +41,17 @@ class ListConnectorColumnValuesTool(ConnectorTool):
             return ToolOutput(success=False, error=f"'{connector}' is shared across orgs and has no org_id, so it cannot be read here.")
         if column not in types or types[column] not in catalog.TEXT_TYPES:
             return ToolOutput(success=False, error=f"'{column}' is not a text column in '{connector}'.")
-        if date_column not in types or types[date_column] not in catalog.DATE_TYPES:
+        if date_column not in types or not catalog.is_date_column({"name": date_column, "data_type": types[date_column]}):
             return ToolOutput(success=False, error=f"'{date_column}' is not a date column in '{connector}'.")
 
         rows = await catalog.get_column_values(
-            self.pool, self.datasets_schema, connector, org_id, column, date_column, MAX_VALUES + 1
+            self.pool,
+            self.datasets_schema,
+            connector,
+            org_id,
+            column,
+            {"name": date_column, "data_type": types[date_column]},
+            MAX_VALUES + 1,
         )
         truncated = len(rows) > MAX_VALUES
         rows = rows[:MAX_VALUES]
