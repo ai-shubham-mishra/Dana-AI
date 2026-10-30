@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Pencil, Reply, ShieldAlert, X, type LucideIcon } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Check, Maximize2, Pencil, Reply, ShieldAlert, X, type LucideIcon } from "lucide-react";
 
 import { KeyValueBoxes } from "@/components/key-value";
 import { Markdown } from "@/components/markdown";
@@ -285,39 +286,75 @@ export function ApprovalPanel({
   onSubmit: (decisions: Decision[]) => void;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(() => pending.actions.map(initialDraft));
+  const [expanded, setExpanded] = useState(false);
   const decisions = buildDecisions(pending.actions, drafts);
 
   function update(index: number, patch: Partial<Draft>) {
     setDrafts((current) => current.map((draft, i) => (i === index ? { ...draft, ...patch } : draft)));
   }
 
+  const cards = pending.actions.map((action, index) => (
+    <ApprovalCard
+      key={`${index}-${action.name}`}
+      action={action}
+      draft={drafts[index] ?? initialDraft(action)}
+      disabled={disabled}
+      onChange={(patch) => update(index, patch)}
+    />
+  ));
+
+  const submit = (
+    <button
+      type="button"
+      disabled={disabled || !decisions}
+      onClick={() => decisions && onSubmit(decisions)}
+      className="inline-flex items-center gap-1.5 rounded-md bg-cta px-4 py-1.5 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      Submit
+    </button>
+  );
+
   return (
     <section aria-label="Approval required" className="rounded-2xl border border-primary/40 bg-card p-4 shadow-elevated">
       <header className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <ShieldAlert className="size-4 text-primary" />
-        Dana needs your input to continue
-      </header>
-      <div className="space-y-3">
-        {pending.actions.map((action, index) => (
-          <ApprovalCard
-            key={`${index}-${action.name}`}
-            action={action}
-            draft={drafts[index] ?? initialDraft(action)}
-            disabled={disabled}
-            onChange={(patch) => update(index, patch)}
-          />
-        ))}
-      </div>
-      <div className="mt-4 flex justify-end">
+        <span className="flex-1">Dana needs your input to continue</span>
         <button
           type="button"
-          disabled={disabled || !decisions}
-          onClick={() => decisions && onSubmit(decisions)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-cta px-4 py-1.5 text-sm font-medium text-cta-foreground transition-colors hover:bg-cta-hover disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={() => setExpanded(true)}
+          aria-label="Expand approval details"
+          title="Expand"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:bg-muted"
         >
-          Submit
+          <Maximize2 className="size-3.5" />
+          Expand
         </button>
-      </div>
+      </header>
+      <div className="space-y-3">{cards}</div>
+      <div className="mt-4 flex justify-end">{submit}</div>
+
+      <Dialog.Root open={expanded} onOpenChange={setExpanded}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px]" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[min(94vw,56rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-border bg-card text-card-foreground shadow-elevated">
+            <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-3">
+              <Dialog.Title className="flex items-center gap-2 text-sm font-semibold">
+                <ShieldAlert className="size-4 text-primary" />
+                Dana needs your input to continue
+              </Dialog.Title>
+              <Dialog.Close
+                aria-label="Close approval details"
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-4" />
+              </Dialog.Close>
+            </div>
+            <Dialog.Description className="sr-only">Review the details and choose how to respond.</Dialog.Description>
+            <div className="flex-1 space-y-3 overflow-y-auto p-5">{cards}</div>
+            <div className="flex justify-end border-t border-border px-5 py-3">{submit}</div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </section>
   );
 }
