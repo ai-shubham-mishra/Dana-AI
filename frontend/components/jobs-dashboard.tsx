@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { Activity, CheckCircle2, CircleDashed, XCircle, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -7,7 +8,7 @@ import { KeyValueBoxes } from "@/components/key-value";
 import { useAccessToken } from "@/lib/auth";
 import { relativeTime } from "@/lib/format";
 import { useJob, useJobs } from "@/lib/queries";
-import type { JobStatus, JobSummary } from "@/lib/types";
+import type { JobEvent, JobStatus, JobSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -112,6 +113,47 @@ function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selecte
   );
 }
 
+function Timeline({ events, status }: { events: JobEvent[]; status: JobStatus }) {
+  const live = ACTIVE_STATUSES.has(status);
+  const last = events.length - 1;
+  const endDot = status === "failed" ? "bg-destructive" : status === "succeeded" ? "bg-success" : "bg-primary";
+
+  return (
+    <ol className="space-y-2 border-l border-border pl-4">
+      {events.map((event, index) => {
+        const isLatest = index === last;
+        return (
+          <motion.li
+            key={`${event.created_at}-${index}`}
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+            className={cn("relative text-sm transition-colors duration-500", !isLatest && "text-muted-foreground")}
+          >
+            <span className="absolute -left-[21px] top-1.5 flex size-2 items-center justify-center" aria-hidden>
+              {isLatest && live ? (
+                <motion.span
+                  className="absolute inline-flex size-2 rounded-full bg-primary"
+                  animate={{ scale: [1, 2.2, 1], opacity: [0.6, 0, 0.6] }}
+                  transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                />
+              ) : null}
+              <span
+                className={cn(
+                  "relative inline-flex size-2 rounded-full transition-colors duration-500",
+                  isLatest ? endDot : "bg-muted-foreground/40",
+                )}
+              />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">{event.percent}%</span>{" "}
+            <span className={cn(isLatest && "font-medium")}>{event.message}</span>
+          </motion.li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function JobDetailPanel({ jobId }: { jobId: string }) {
   const job = useJob(jobId);
   if (job.isPending) return <p className="px-5 py-6 text-sm text-muted-foreground">Loading job…</p>;
@@ -181,15 +223,7 @@ function JobDetailPanel({ jobId }: { jobId: string }) {
       {detail.events.length > 0 ? (
         <section className="space-y-2">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Timeline</h4>
-          <ol className="space-y-2 border-l border-border pl-4">
-            {detail.events.map((event, index) => (
-              <li key={`${event.created_at}-${index}`} className="relative text-sm">
-                <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-primary" aria-hidden />
-                <span className="text-xs tabular-nums text-muted-foreground">{event.percent}%</span>{" "}
-                <span>{event.message}</span>
-              </li>
-            ))}
-          </ol>
+          <Timeline events={detail.events} status={detail.status} />
         </section>
       ) : null}
     </div>
