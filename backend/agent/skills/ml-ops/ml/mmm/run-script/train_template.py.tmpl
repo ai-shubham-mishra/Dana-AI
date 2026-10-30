@@ -26,6 +26,7 @@ HDI_PROB = 0.90
 PERIOD_FREQUENCIES = ("all_time", "yearly", "monthly")
 RESAMPLE_RULES = {"yearly": "YE", "monthly": "ME"}
 WORST_RESIDUAL_COUNT = 5
+MIN_TRAIN_ROWS = 30
 RHAT_LIMIT = 1.1
 RHAT_VARIABLES = (
     "intercept_contribution",
@@ -153,15 +154,16 @@ def incremental_over_spend(model, frame, date_col, channels, frequency):
     return labelled_summary(contribution / denominator.where(denominator > 0))
 
 
-def fit_metrics(model, frame, date_col, target):
-    predictive = model.idata["posterior_predictive"]["y_original_scale"]
-    dates = pd.to_datetime(predictive["date"].values)
-    actual_all = pd.Series(frame[target].to_numpy(dtype=float), index=pd.to_datetime(frame[date_col]))
-    actual_all = actual_all.reindex(dates).to_numpy()
-    keep = np.isfinite(actual_all)
-    actual = actual_all[keep]
+def aligned_actuals(frame, date_col, target, dates):
+    series = pd.Series(frame[target].to_numpy(dtype=float), index=pd.to_datetime(frame[date_col]))
+    return series.reindex(dates).to_numpy()
+
+
+def score_draws(draws, actual, dates):
+    keep = np.isfinite(actual)
+    actual = actual[keep]
     kept_dates = dates[keep]
-    draws = predictive.transpose("chain", "draw", "date").values.reshape(-1, len(dates))[:, keep]
+    draws = draws[:, keep]
     pred = draws.mean(axis=0)
 
     resid = actual - pred
@@ -211,6 +213,27 @@ def fit_metrics(model, frame, date_col, target):
     }
 
 
+def fit_metrics(model, train, date_col, target):
+    predictive = model.idata["posterior_predictive"]["y_original_scale"]
+    dates = pd.to_datetime(predictive["date"].values)
+    draws = predictive.transpose("chain", "draw", "date").values.reshape(-1, len(dates))
+    return score_draws(draws, aligned_actuals(train, date_col, target, dates), dates)
+
+
+def holdout_metrics(model, test, date_col, target, random_seed):
+    predictive = model.sample_posterior_predictive(
+        test.drop(columns=target),
+        include_last_observations=True,
+        extend_idata=False,
+        var_names=["y_original_scale"],
+        random_seed=random_seed,
+    )["y_original_scale"]
+    dates = pd.to_datetime(predictive["date"].values)
+    sample_dims = [dim for dim in predictive.dims if dim != "date"]
+    draws = predictive.transpose(*sample_dims, "date").values.reshape(-1, len(dates))
+    return score_draws(draws, aligned_actuals(test, date_col, target, dates), dates)
+
+
 def contribution_totals(post, var, dim=None):
     data = post[var].mean(dim=("chain", "draw"))
     if dim is None:
@@ -254,21 +277,31 @@ def run():
     model_settings = CONFIG["model"]
 
     progress("loading_data", 5, "Loading the run dataset")
-    frame = load_frame()
+    frame = load_frame().sort_values(date_col).reset_index(drop=True)
+    holdout_periods = CONFIG["validation"]["holdout_periods"]
+    if holdout_periods > 0:
+        if len(frame) - holdout_periods < MIN_TRAIN_ROWS:
+            raise ValueError(
+                f"need at least {MIN_TRAIN_ROWS} training rows after a {holdout_periods}-row holdout; "
+                f"the dataset has {len(frame)} rows"
+            )
+        train, test = frame.iloc[:-holdout_periods], frame.iloc[-holdout_periods:]
+    else:
+        train, test = frame, frame.iloc[0:0]
 
-    requested = [c for c in CONFIG["channels"] if c in frame.columns]
-    spend = frame[requested].sum(axis=0)
+    requested = [c for c in CONFIG["channels"] if c in train.columns]
+    spend = train[requested].sum(axis=0)
     excluded = sorted(spend[spend < MIN_CHANNEL_SPEND].index.tolist())
     channels = sorted(c for c in requested if c not in excluded)
     if not channels:
         raise ValueError("no channels with spend in the training window")
-    controls = [c for c in CONFIG["controls"] if c in frame.columns]
+    controls = [c for c in CONFIG["controls"] if c in train.columns]
 
-    channel_spend = frame[channels].sum(axis=0)
+    channel_spend = train[channels].sum(axis=0)
     prior_sigma = (channel_spend / channel_spend.sum()).to_numpy()
-    X = frame.drop(columns=target)
-    y = frame[target]
-    progress("loading_data", 10, f"Loaded {len(frame)} rows for {len(channels)} channels")
+    X = train.drop(columns=target)
+    y = train[target]
+    progress("loading_data", 10, f"Loaded {len(train)} training rows and {len(test)} holdout rows for {len(channels)} channels")
 
     progress("building_model", 15, f"Building the MMM with {len(channels)} channels")
     model = MMM(
@@ -312,19 +345,20 @@ def run():
     max_rhat = float(az.summary(data=model.idata, var_names=names)["r_hat"].max())
     progress("diagnostics", 85, f"{divergences} divergences, max R-hat {max_rhat:.3f}")
 
-    progress("posterior_predictive", 90, "Sampling posterior predictive")
+    progress("posterior_predictive", 90, "Sampling posterior predictive on the training window")
     model.sample_posterior_predictive(X, random_seed=np.random.default_rng(sampling["random_seed"]))
 
     errors = {}
-    progress("metrics", 92, "Computing fit, contribution and ROI metrics")
+    progress("metrics", 92, "Computing fit, holdout, contribution and ROI metrics")
     post = model.idata.posterior
+    has_holdout = len(test) > 0
     evaluation = {
         "status": "success",
         "plan": PLAN_SUMMARY,
         "generated_at": GENERATED_AT,
-        "rows": len(frame),
-        "date_start": frame[date_col].min().date().isoformat(),
-        "date_end": frame[date_col].max().date().isoformat(),
+        "rows": len(train),
+        "date_start": train[date_col].min().date().isoformat(),
+        "date_end": train[date_col].max().date().isoformat(),
         "channels": channels,
         "controls": controls,
         "excluded_channels": excluded,
@@ -333,11 +367,29 @@ def run():
         "rhat_limit": RHAT_LIMIT,
         "rhat_ok": max_rhat <= RHAT_LIMIT,
         "sampling": dict(sampling),
-        "fit": safe_metric(errors, "fit", lambda: fit_metrics(model, frame, date_col, target)),
+        "validation": {
+            "holdout_periods": holdout_periods,
+            "train_rows": len(train),
+            "train_start": train[date_col].min().date().isoformat(),
+            "train_end": train[date_col].max().date().isoformat(),
+            "holdout_rows": len(test),
+            "holdout_start": test[date_col].min().date().isoformat() if has_holdout else None,
+            "holdout_end": test[date_col].max().date().isoformat() if has_holdout else None,
+        },
+        "fit": safe_metric(errors, "fit", lambda: fit_metrics(model, train, date_col, target)),
+        "holdout": (
+            safe_metric(
+                errors,
+                "holdout",
+                lambda: holdout_metrics(model, test, date_col, target, np.random.default_rng(sampling["random_seed"])),
+            )
+            if has_holdout
+            else None
+        ),
         "contributions": safe_metric(errors, "contributions", lambda: contribution_summary(model)),
         "roas": by_frequency(errors, "roas", lambda f: labelled_summary(model.incrementality.contribution_over_spend(frequency=f))),
         "incremental_roas": by_frequency(
-            errors, "incremental_roas", lambda f: incremental_over_spend(model, frame, date_col, channels, f)
+            errors, "incremental_roas", lambda f: incremental_over_spend(model, train, date_col, channels, f)
         ),
         "marginal_roas": by_frequency(
             errors, "marginal_roas", lambda f: labelled_summary(model.incrementality.marginal_contribution_over_spend(frequency=f))

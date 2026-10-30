@@ -21,7 +21,7 @@ class StartMmmRunInput(ToolInput):
     date_end: date = Field(description="Last date of the training window, YYYY-MM-DD.")
     overrides: dict[str, Any] = Field(
         default_factory=dict,
-        description="Optional whitelisted config overrides: adstock_l_max, yearly_seasonality, time_varying_intercept, chains, tune, draws.",
+        description="Optional whitelisted config overrides: adstock_l_max, yearly_seasonality, time_varying_intercept, chains, tune, draws, holdout_periods.",
     )
     rationale: str = Field(default="", description="Short data-scientist reasoning for these choices, shown to the user on approval.")
 

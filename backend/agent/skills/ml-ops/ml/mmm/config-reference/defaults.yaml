@@ -38,3 +38,5 @@ sampling:
   tune: 2000
   target_accept: 0.95
   random_seed: 123
+validation:
+  holdout_periods: 8

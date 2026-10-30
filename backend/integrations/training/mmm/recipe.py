@@ -38,6 +38,9 @@ def build_config(plan: MMMPlan, defaults: dict[str, Any] | None = None) -> dict[
     for key in ("chains", "tune", "draws"):
         if key in overrides:
             sampling[key] = overrides[key]
+    validation = base["validation"]
+    if "holdout_periods" in overrides:
+        validation["holdout_periods"] = overrides["holdout_periods"]
     return {
         "date_column": DATE_COLUMN,
         "target_column": plan.kpi,
@@ -45,6 +48,7 @@ def build_config(plan: MMMPlan, defaults: dict[str, Any] | None = None) -> dict[
         "controls": sorted(plan.controls),
         "model": model,
         "sampling": sampling,
+        "validation": validation,
     }
 
 

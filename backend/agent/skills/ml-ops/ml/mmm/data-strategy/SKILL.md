@@ -46,7 +46,7 @@ Do not use the KPI itself, post-period outcomes, or variables that are only know
 
 ## 6. Checks before training
 
-- Row count in the window is at least 20, and ideally at least 52 for weekly data.
+- Row count in the window is at least 20, and ideally at least 52 for weekly data. The trainer holds out the last `holdout_periods` rows (default 8) for an out-of-sample check and fits on the rest, so the training window needs at least 30 rows after the holdout. Daily data needs about 56 holdout rows, so size the window for the holdout too.
 - The KPI has variance (not constant zero).
 - Channels have non-zero spend in the window.
 - No duplicated date rows after aggregation (the platform guarantees this, but say so if the source looks duplicated).

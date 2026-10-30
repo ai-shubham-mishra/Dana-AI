@@ -17,6 +17,7 @@ OVERRIDE_RANGES: dict[str, tuple[int, int]] = {
     "chains": (1, 8),
     "tune": (100, 4000),
     "draws": (100, 4000),
+    "holdout_periods": (0, 52),
 }
 BOOL_OVERRIDES = frozenset({"time_varying_intercept"})
 OVERRIDE_KEYS = frozenset(OVERRIDE_RANGES) | BOOL_OVERRIDES

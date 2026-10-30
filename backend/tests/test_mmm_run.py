@@ -55,6 +55,7 @@ def test_valid_plan_passes_and_lists_outputs():
         ({"kpi": "sales"}, "not a mapped output"),
         ({"controls": ["tv"]}, "must not overlap"),
         ({"overrides": {"tune": 5}}, "tune"),
+        ({"overrides": {"holdout_periods": 99}}, "holdout_periods"),
         ({"overrides": {"learning_rate": 0.1}}, "learning_rate"),
     ],
 )
@@ -73,6 +74,12 @@ def test_build_config_applies_whitelisted_overrides_and_sorts_channels():
     assert config["sampling"]["chains"] == 2
     assert load_defaults()["model"]["adstock"]["l_max"] == 10
     assert "chains:" in dump_config(config)
+
+
+def test_build_config_sets_holdout_periods_from_defaults_or_overrides():
+    assert build_config(make_plan())["validation"] == {"holdout_periods": 8}
+    assert build_config(make_plan(overrides={"holdout_periods": 0}))["validation"] == {"holdout_periods": 0}
+    assert load_defaults()["validation"]["holdout_periods"] == 8
 
 
 def test_render_script_is_safe_for_hostile_rationale():
@@ -336,4 +343,15 @@ def test_generated_script_trains_and_fills_the_run_folder(tmp_path: Path):
         assert set(evaluation[block]) == {"all_time", "yearly", "monthly"}
         assert set(evaluation[block]["all_time"]) == set(evaluation["channels"])
     assert set(evaluation["transformations"]["saturation_lam"]) == set(evaluation["channels"])
+    holdout_periods = 8
+    assert evaluation["validation"]["holdout_periods"] == holdout_periods
+    assert evaluation["validation"]["train_rows"] == weeks - holdout_periods
+    assert evaluation["validation"]["holdout_rows"] == holdout_periods
+    assert evaluation["rows"] == weeks - holdout_periods
+    assert evaluation["validation"]["holdout_start"] < evaluation["validation"]["holdout_end"]
+    assert evaluation["validation"]["train_end"] < evaluation["validation"]["holdout_start"]
+    assert fit_keys <= evaluation["fit"].keys()
+    assert evaluation["fit"]["observations"] == weeks - holdout_periods
+    assert fit_keys <= evaluation["holdout"].keys()
+    assert evaluation["holdout"]["observations"] == holdout_periods
 

@@ -19,8 +19,11 @@ Pass these as `overrides` on `start_mmm_run`. Anything else is rejected.
 | `chains` | 4 | 1 to 8 | Lower for a quick check, keep 4 for the real run. |
 | `tune` | 2000 | 100 to 4000 | Lower for a quick check. |
 | `draws` | (sampler default) | 100 to 4000 | Lower for a quick check. |
+| `holdout_periods` | 8 | 0 to 52 | Rows held out from the end of the window for out-of-sample checks. Weekly data: 8 is a good default. Daily data: about 56. Set 0 only for a final all-data fit after the model is validated. |
 
 Keep the default `random_seed` (123) so runs are comparable.
+
+The holdout is the last `holdout_periods` rows. The model is fit on the rows before it, and in-sample metrics come from that training window. Out-of-sample metrics come from predicting the holdout. The saved model excludes the holdout rows, so set `holdout_periods` to 0 only for the final fit after the holdout check has passed.
 
 ## Settings that are fixed by the recipe
 
