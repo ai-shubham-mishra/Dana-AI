@@ -44,6 +44,7 @@ class MMMPlan(BaseModel):
     kpi: str
     channels: list[str] = Field(min_length=1)
     controls: list[str] = Field(default_factory=list)
+    controls_reason: str = ""
     sources: list[SourceSpec] = Field(min_length=1)
     date_start: date
     date_end: date
@@ -52,6 +53,11 @@ class MMMPlan(BaseModel):
 
     @model_validator(mode="after")
     def _check_plan(self) -> MMMPlan:
+        if not self.controls and not self.controls_reason.strip():
+            raise PlanError(
+                "no controls were given. Confirm controls with the user (holiday or Black Friday flags, "
+                "promotions, price, weather) and pass them in controls, or pass controls_reason explaining why none apply"
+            )
         outputs: list[str] = []
         for source in self.sources:
             outputs.extend(source.metrics)

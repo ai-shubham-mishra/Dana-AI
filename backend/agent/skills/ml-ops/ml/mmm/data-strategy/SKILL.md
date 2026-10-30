@@ -32,6 +32,16 @@ Controls explain the KPI without being marketing spend. Good controls are:
 
 Do not use the KPI itself, post-period outcomes, or variables that are only known after the fact as controls.
 
+Controls are confirmed with the user, never silently left blank. Look for candidate columns in the connector tables first, then ask the user with `ask_user`, listing the candidates as options. Typical candidates:
+
+- holiday or event flags, for example `black_friday`
+- promotion flags or discount depth, for example `google_promotion`, `meta_promotion`
+- pricing, for example `price`
+- weather, for example `weather_data`, `temperature`
+- brand demand signals, for example `brand_query_volume`
+
+Keep every control the user confirms. If the user confirms that none apply, pass `controls_reason` with that reason.
+
 ## 4. Date window
 
 - Resolve the window with `get_current_date` and `resolve_date_range`.

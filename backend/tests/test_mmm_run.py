@@ -57,12 +57,33 @@ def test_valid_plan_passes_and_lists_outputs():
         ({"overrides": {"tune": 5}}, "tune"),
         ({"overrides": {"holdout_periods": 99}}, "holdout_periods"),
         ({"overrides": {"learning_rate": 0.1}}, "learning_rate"),
+        ({"controls": []}, "controls_reason"),
     ],
 )
 def test_invalid_plans_are_rejected(changes, message):
     with pytest.raises((ValidationError, PlanError)) as excinfo:
         make_plan(**changes)
     assert message in str(excinfo.value)
+
+
+def test_plan_accepts_empty_controls_only_with_a_reason():
+    plan = make_plan(controls=[], controls_reason="Client confirmed no promotion or holiday data applies.")
+    assert plan.controls == []
+
+
+def test_approval_text_shows_controls_or_why_none():
+    tool = StartMmmRunTool()
+    with_controls = tool.approval_text({"kpi": "revenue", "channels": ["tv"], "controls": ["google_promotion", "meta_promotion"], "date_start": "2024-01-01", "date_end": "2024-12-31"})
+    assert "controls google_promotion, meta_promotion" in with_controls
+    without = tool.approval_text({"kpi": "revenue", "channels": ["tv"], "controls": [], "controls_reason": "No promo data", "date_start": "2024-01-01", "date_end": "2024-12-31"})
+    assert "controls none (No promo data)" in without
+
+
+def test_start_mmm_run_asks_for_controls_or_a_reason():
+    service = RecordingService()
+    result = run_tool(StartMmmRunTool(), tool_args(controls=[]), service)
+    assert result.startswith("Error:") and "controls_reason" in result
+    assert service.plans == []
 
 
 def test_build_config_applies_whitelisted_overrides_and_sorts_channels():
