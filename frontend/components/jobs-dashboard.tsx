@@ -107,6 +107,7 @@ function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selecte
         <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th scope="col" className="px-5 py-3 font-medium">Job</th>
+            <th scope="col" className="px-5 py-3 font-medium">Job ID</th>
             <th scope="col" className="px-5 py-3 font-medium">Kind</th>
             <th scope="col" className="w-48 px-5 py-3 font-medium">Progress</th>
             <th scope="col" className="px-5 py-3 font-medium">Status</th>
@@ -136,6 +137,11 @@ function JobsTable({ jobs, selectedId, onSelect }: { jobs: JobSummary[]; selecte
                   ) : job.message ? (
                     <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{job.message}</div>
                   ) : null}
+                </td>
+                <td className="px-5 py-3">
+                  <span className="block max-w-40 truncate font-mono text-xs text-muted-foreground" title={job.id}>
+                    {job.id}
+                  </span>
                 </td>
                 <td className="px-5 py-3 text-muted-foreground">{job.kind}</td>
                 <td className="px-5 py-3">
