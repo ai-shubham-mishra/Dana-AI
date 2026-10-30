@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDashed, Copy, Minus, Trash2, X, XCircle, type LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 
 import { CollapsibleSection } from "@/components/collapsible-section";
 import { DeleteJobsDialog } from "@/components/delete-jobs-dialog";
@@ -15,6 +15,8 @@ import type { JobStatus, JobSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | "active" | "succeeded" | "failed";
+
+const BLADE_TRANSITION_MS = 300;
 
 const FILTERS: Record<Filter, { label: string; matches: (status: JobStatus) => boolean }> = {
   all: { label: "All jobs", matches: () => true },
@@ -286,6 +288,7 @@ function JobsTable({
 
 function JobBlade({
   jobId,
+  open,
   position,
   total,
   onPrev,
@@ -293,6 +296,7 @@ function JobBlade({
   onClose,
 }: {
   jobId: string;
+  open: boolean;
   position: number | null;
   total: number;
   onPrev: (() => void) | null;
@@ -308,7 +312,12 @@ function JobBlade({
   return (
     <aside
       aria-label="Job details"
-      className="fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card shadow-2xl lg:sticky lg:top-6 lg:z-0 lg:max-h-[calc(100dvh-3rem)] lg:rounded-xl lg:border lg:shadow-sm"
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card shadow-2xl",
+        "lg:static lg:z-0 lg:w-[26rem] lg:max-h-[calc(100dvh-3rem)] lg:shrink-0 lg:rounded-xl lg:border lg:shadow-sm",
+        "lg:transition-[opacity,transform] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none",
+        open ? "lg:translate-x-0 lg:opacity-100" : "lg:translate-x-6 lg:opacity-0",
+      )}
     >
       <header className="flex items-center gap-1 border-b border-border px-4 py-2.5">
         <p className="min-w-0 flex-1 text-xs text-muted-foreground">
@@ -325,7 +334,12 @@ function JobBlade({
         </IconButton>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto p-5 transition-opacity duration-200 motion-reduce:transition-none",
+          job.isPlaceholderData && "opacity-50",
+        )}
+      >
         {job.isPending ? <p className="text-sm text-muted-foreground">Loading job…</p> : null}
         {job.error ? <p className="text-sm text-destructive">{job.error.message}</p> : null}
         {detail ? (
@@ -391,6 +405,8 @@ export function JobsDashboard() {
   const deleteJobs = useDeleteJobs();
   const items = useMemo(() => jobs.data ?? [], [jobs.data]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [bladeOpen, setBladeOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [filterValue, setFilterValue] = useState<Filter>("all");
   const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -413,14 +429,30 @@ export function JobsDashboard() {
     if (target) setSelectedId(target.id);
   };
 
+  const openJob = (id: string) => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    setSelectedId(id);
+    setBladeOpen(true);
+  };
+
+  const closeBlade = useCallback(() => {
+    setBladeOpen(false);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setSelectedId(null), BLADE_TRANSITION_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }, []);
+
   useEffect(() => {
-    if (!selectedId || confirmOpen) return;
+    if (!bladeOpen || confirmOpen) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedId(null);
+      if (event.key === "Escape") closeBlade();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, confirmOpen]);
+  }, [bladeOpen, confirmOpen, closeBlade]);
 
   const toggleOne = (id: string, checked: boolean) => {
     setNotice(null);
@@ -447,7 +479,7 @@ export function JobsDashboard() {
   const confirmDelete = async () => {
     const result = await deleteJobs.mutateAsync(selectedForDelete).catch(() => null);
     if (!result) return;
-    if (selectedId && result.deleted.includes(selectedId)) setSelectedId(null);
+    if (selectedId && result.deleted.includes(selectedId)) closeBlade();
     setCheckedIds(new Set());
     setConfirmOpen(false);
     const parts: string[] = [];
@@ -482,7 +514,7 @@ export function JobsDashboard() {
       <JobsTable
         jobs={visible}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={openJob}
         checkedIds={checkedIds}
         onToggle={toggleOne}
         onToggleAll={toggleAll}
@@ -535,8 +567,8 @@ export function JobsDashboard() {
 
         <div
           className={cn(
-            "grid gap-6 lg:items-start",
-            selectedId ? "lg:grid-cols-[minmax(0,1fr)_26rem]" : "grid-cols-1",
+            "grid gap-y-6 lg:items-start lg:transition-[grid-template-columns,column-gap] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none",
+            bladeOpen ? "lg:grid-cols-[minmax(0,1fr)_26rem] lg:gap-x-6" : "lg:grid-cols-[minmax(0,1fr)_0rem] lg:gap-x-0",
           )}
         >
           <section className="min-w-0 rounded-xl border border-border bg-card shadow-sm">
@@ -582,15 +614,17 @@ export function JobsDashboard() {
           </section>
 
           {selectedId && (
-            <JobBlade
-              key={selectedId}
-              jobId={selectedId}
-              position={selectedIndex >= 0 ? selectedIndex + 1 : null}
-              total={visible.length}
-              onPrev={selectedIndex > 0 ? () => goTo(-1) : null}
-              onNext={selectedIndex >= 0 && selectedIndex < visible.length - 1 ? () => goTo(1) : null}
-              onClose={() => setSelectedId(null)}
-            />
+            <div className="min-w-0 overflow-clip lg:sticky lg:top-6">
+              <JobBlade
+                jobId={selectedId}
+                open={bladeOpen}
+                position={selectedIndex >= 0 ? selectedIndex + 1 : null}
+                total={visible.length}
+                onPrev={selectedIndex > 0 ? () => goTo(-1) : null}
+                onNext={selectedIndex >= 0 && selectedIndex < visible.length - 1 ? () => goTo(1) : null}
+                onClose={closeBlade}
+              />
+            </div>
           )}
         </div>
       </div>
