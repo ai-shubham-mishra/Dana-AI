@@ -7,7 +7,7 @@ function isNested(value: unknown): value is Nested {
 }
 
 function entriesOf(value: Nested): [string, unknown][] {
-  return Array.isArray(value) ? value.map((item, index) => [String(index), item]) : Object.entries(value);
+  return Array.isArray(value) ? value.map((item, index) => [`#${index + 1}`, item]) : Object.entries(value);
 }
 
 function Leaf({ value }: { value: unknown }) {
@@ -23,9 +23,20 @@ function Value({ value }: { value: unknown }) {
   if (Array.isArray(value) && value.every((item) => !isNested(item))) {
     return <Leaf value={value.map(String).join(", ")} />;
   }
+  return <NestedBlocks data={value} />;
+}
+
+function NestedBlocks({ data }: { data: Nested }) {
   return (
-    <div className="rounded-md border border-border bg-muted/40 p-2">
-      <KeyValueBoxes data={value} />
+    <div className="space-y-2">
+      {entriesOf(data).map(([key, value]) => (
+        <div key={key} className="min-w-0 rounded-md border border-border bg-muted/30 px-3 py-2">
+          <div className="break-words text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{key}</div>
+          <div className="mt-1 min-w-0 text-sm">
+            <Value value={value} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -35,10 +46,10 @@ export function KeyValueBoxes({ data, className }: { data: unknown; className?: 
   const entries = entriesOf(data);
   if (entries.length === 0) return <Leaf value={null} />;
   return (
-    <dl className={cn("grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-sm", className)}>
+    <dl className={cn("grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm", className)}>
       {entries.map(([key, value]) => (
         <div key={key} className="contents">
-          <dt className="pt-0.5 text-muted-foreground">{key}</dt>
+          <dt className="min-w-0 break-words pt-0.5 text-muted-foreground">{key}</dt>
           <dd className="min-w-0">
             <Value value={value} />
           </dd>
