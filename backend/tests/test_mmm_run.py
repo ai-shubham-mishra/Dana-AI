@@ -79,6 +79,24 @@ def test_approval_text_shows_controls_or_why_none():
     assert "controls none (No promo data)" in without
 
 
+def test_approval_text_shows_the_country_scope_for_every_source():
+    tool = StartMmmRunTool()
+    scoped_text = tool.approval_text(
+        {
+            "kpi": "revenue",
+            "channels": ["tv"],
+            "controls": ["price"],
+            "sources": [
+                {"table": "sales_daily", "date_column": "date", "metrics": {"revenue": "revenue"}, "filters": {"country": "DE"}},
+                {"table": "google_ads", "date_column": "date", "metrics": {"search": "spend"}},
+            ],
+            "date_start": "2024-01-01",
+            "date_end": "2024-12-31",
+        }
+    )
+    assert "scope sales_daily (country=DE); google_ads (no filter)" in scoped_text
+
+
 def test_start_mmm_run_asks_for_controls_or_a_reason():
     service = RecordingService()
     result = run_tool(StartMmmRunTool(), tool_args(controls=[]), service)
@@ -130,8 +148,8 @@ class FakeCatalog:
     async def get_connector_columns(self, pool, schema, table):
         return self.columns.get(table)
 
-    async def get_daily_metric_rows(self, pool, schema, table, org_id, date_column, metric_columns, start, end):
-        self.calls.append((table, org_id, date_column, tuple(metric_columns), start, end))
+    async def get_daily_metric_rows(self, pool, schema, table, org_id, date_column, metric_columns, start, end, filters=None):
+        self.calls.append((table, org_id, date_column, tuple(metric_columns), start, end, filters))
         return self.metric_rows.get(table, [])
 
 
@@ -199,6 +217,69 @@ def test_build_dataset_enforces_minimum_usable_rows(monkeypatch):
     monkeypatch.setattr(catalog, "get_daily_metric_rows", fake.get_daily_metric_rows)
     with pytest.raises(PlanError, match="usable rows"):
         asyncio.run(build_dataset(None, "datasets", ORG_A, make_plan()))
+
+
+def scoped_plan(country: str = "DE") -> MMMPlan:
+    sources = [
+        SourceSpec(table="sales_daily", date_column="date", metrics={"revenue": "revenue", "tv": "tv_spend", "price": "avg_price"}, filters={"country": country}),
+        SourceSpec(table="google_ads", date_column="date", metrics={"search": "search_spend"}, filters={"country": country}),
+    ]
+    return make_plan(sources=sources)
+
+
+def test_source_filters_reject_bad_identifiers_and_values():
+    with pytest.raises(ValidationError, match="not a valid connector table or column name"):
+        SourceSpec(table="sales_daily", date_column="date", metrics={"revenue": "revenue"}, filters={"country; drop": "DE"})
+    with pytest.raises(ValidationError, match="must be 1 to 100 characters"):
+        SourceSpec(table="sales_daily", date_column="date", metrics={"revenue": "revenue"}, filters={"country": "  "})
+    with pytest.raises(ValidationError, match="must be 1 to 100 characters"):
+        SourceSpec(table="sales_daily", date_column="date", metrics={"revenue": "revenue"}, filters={"country": "x" * 101})
+
+
+def scoped_columns() -> dict[str, list[dict[str, str]]]:
+    columns = good_columns()
+    columns["sales_daily"] = columns["sales_daily"] + [column("country", "text")]
+    columns["google_ads"] = columns["google_ads"] + [column("country", "text")]
+    return columns
+
+
+def test_validate_sources_refuses_missing_or_non_text_filter_columns(monkeypatch):
+    columns = scoped_columns()
+    columns["google_ads"] = [column("org_id", "text"), column("date", "date"), column("search_spend")]
+    fake = FakeCatalog(columns, {})
+    monkeypatch.setattr(catalog, "get_connector_columns", fake.get_connector_columns)
+    with pytest.raises(PlanError, match="filter column 'country' not found"):
+        asyncio.run(validate_sources(None, "datasets", scoped_plan()))
+    columns["google_ads"] = [column("org_id", "text"), column("date", "date"), column("search_spend"), column("country", "integer")]
+    with pytest.raises(PlanError, match="not text"):
+        asyncio.run(validate_sources(None, "datasets", scoped_plan()))
+
+
+def test_build_dataset_passes_source_filters_to_the_query(monkeypatch):
+    metric_rows = {"sales_daily": day_rows(30), "google_ads": day_rows(30, width=1)}
+    fake = FakeCatalog(scoped_columns(), metric_rows)
+    monkeypatch.setattr(catalog, "get_connector_columns", fake.get_connector_columns)
+    monkeypatch.setattr(catalog, "get_daily_metric_rows", fake.get_daily_metric_rows)
+    asyncio.run(build_dataset(None, "datasets", ORG_A, scoped_plan("DE")))
+    assert [call[6] for call in fake.calls] == [{"country": "DE"}, {"country": "DE"}]
+
+
+def test_build_dataset_passes_no_filters_when_unscoped(monkeypatch):
+    metric_rows = {"sales_daily": day_rows(30), "google_ads": day_rows(30, width=1)}
+    fake = FakeCatalog(good_columns(), metric_rows)
+    monkeypatch.setattr(catalog, "get_connector_columns", fake.get_connector_columns)
+    monkeypatch.setattr(catalog, "get_daily_metric_rows", fake.get_daily_metric_rows)
+    asyncio.run(build_dataset(None, "datasets", ORG_A, make_plan()))
+    assert [call[6] for call in fake.calls] == [None, None]
+
+
+def test_build_config_records_data_scope_only_when_filtered():
+    scoped_config = build_config(scoped_plan("DE"))
+    assert scoped_config["data_scope"] == [
+        {"table": "sales_daily", "filters": {"country": "DE"}},
+        {"table": "google_ads", "filters": {"country": "DE"}},
+    ]
+    assert "data_scope" not in build_config(make_plan())
 
 
 def test_run_folder_reports_every_missing_file(tmp_path):

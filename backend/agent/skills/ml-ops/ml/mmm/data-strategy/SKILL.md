@@ -42,6 +42,17 @@ Controls are confirmed with the user, never silently left blank. Look for candid
 
 Keep every control the user confirms. If the user confirms that none apply, pass `controls_reason` with that reason.
 
+## 3a. Scope (country or market)
+
+If the user wants the model for one country or market, every source must be filtered to it. Otherwise the sums mix markets and the coefficients are meaningless.
+
+- Find the stored values with `list_connector_column_values` on the country or market column. Users say "Germany", but the data may store "DE". Pick the exact stored value, and check its row count and date range.
+- Confirm the exact value with the user using `ask_user`, listing the matching stored values as options.
+- Pass the same `filters` on every source (for example `{"country": "DE"}`). Every filtered source must have that column; the trainer refuses the plan otherwise. Do not filter one source and leave another unfiltered.
+- A source that has no country column cannot be scoped. Either leave it out, or say so in the rationale and confirm it with the user before training.
+- Filtering can remove most of the rows, so check the scoped window still meets the row minimums in section 6.
+- State the scope in the rationale and in the final report.
+
 ## 4. Date window
 
 - Resolve the window with `get_current_date` and `resolve_date_range`.
@@ -67,6 +78,7 @@ Keep every control the user confirms. If the user confirms that none apply, pass
 State in plain language:
 
 - the KPI and its source
+- the scope, if one applies (for example country DE, and which tables carry the filter)
 - each channel, its source column, and any exclusions
 - the controls and why each was included
 - the date window and row count

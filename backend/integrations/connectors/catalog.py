@@ -220,6 +220,7 @@ async def get_daily_metric_rows(
     metric_columns: list[str],
     start: date,
     end: date,
+    filters: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
     day = sql.SQL("CAST({} AS date)").format(sql.Identifier(date_column))
@@ -227,17 +228,23 @@ async def get_daily_metric_rows(
         sql.SQL("SUM({}) AS {}").format(sql.Identifier(column), sql.Identifier(f"_m{index}"))
         for index, column in enumerate(metric_columns)
     ]
+    conditions = [sql.SQL("{org}::text = %s").format(org=sql.Identifier(ORG_COLUMN))]
+    params: list[Any] = [org_id]
+    for column, value in (filters or {}).items():
+        conditions.append(sql.SQL("{} = %s").format(sql.Identifier(column)))
+        params.append(value)
+    conditions.append(sql.SQL("{day} BETWEEN %s AND %s").format(day=day))
+    params.extend([start, end])
     query = sql.SQL(
-        "SELECT {day} AS _day, {aggregates} FROM {relation} "
-        "WHERE {org}::text = %s AND {day} BETWEEN %s AND %s GROUP BY 1 ORDER BY 1"
+        "SELECT {day} AS _day, {aggregates} FROM {relation} WHERE {conditions} GROUP BY 1 ORDER BY 1"
     ).format(
         day=day,
         aggregates=sql.SQL(", ").join(aggregates),
         relation=relation,
-        org=sql.Identifier(ORG_COLUMN),
+        conditions=sql.SQL(" AND ").join(conditions),
     )
     async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(query, (org_id, start, end))
+        await cur.execute(query, tuple(params))
         rows = await cur.fetchall()
     return [
         {
@@ -246,3 +253,30 @@ async def get_daily_metric_rows(
         }
         for row in rows
     ]
+
+
+async def get_column_values(
+    pool: AsyncConnectionPool,
+    schema: str,
+    table: str,
+    org_id: str,
+    column: str,
+    date_column: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    relation = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier(table))
+    day = sql.SQL("CAST({} AS date)").format(sql.Identifier(date_column))
+    query = sql.SQL(
+        "SELECT {value} AS value, count(*) AS row_count, min({day}) AS first_date, max({day}) AS last_date "
+        "FROM {relation} WHERE {org}::text = %s AND {value} IS NOT NULL "
+        "GROUP BY 1 ORDER BY row_count DESC, value LIMIT %s"
+    ).format(
+        value=sql.Identifier(column),
+        day=day,
+        relation=relation,
+        org=sql.Identifier(ORG_COLUMN),
+    )
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, (org_id, limit))
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]

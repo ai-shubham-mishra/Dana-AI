@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 RESERVED_OUTPUT_NAMES = frozenset({"date"})
+MAX_FILTER_VALUE_LENGTH = 100
 OVERRIDE_RANGES: dict[str, tuple[int, int]] = {
     "adstock_l_max": (1, 52),
     "yearly_seasonality": (0, 6),
@@ -31,12 +32,16 @@ class SourceSpec(BaseModel):
     table: str
     date_column: str
     metrics: dict[str, str] = Field(min_length=1)
+    filters: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_identifiers(self) -> SourceSpec:
-        for name in (self.table, self.date_column, *self.metrics.values()):
+        for name in (self.table, self.date_column, *self.metrics.values(), *self.filters):
             if not IDENTIFIER_PATTERN.match(name):
                 raise PlanError(f"'{name}' is not a valid connector table or column name")
+        for column, value in self.filters.items():
+            if not value.strip() or len(value) > MAX_FILTER_VALUE_LENGTH:
+                raise PlanError(f"filter value for '{column}' must be 1 to {MAX_FILTER_VALUE_LENGTH} characters")
         return self
 
 

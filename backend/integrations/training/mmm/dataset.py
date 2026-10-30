@@ -36,6 +36,11 @@ async def validate_sources(pool: AsyncConnectionPool, schema: str, plan: MMMPlan
             raise PlanError(f"date column '{source.date_column}' not found in '{source.table}'")
         if types[source.date_column] not in DATE_TYPES:
             raise PlanError(f"date column '{source.date_column}' in '{source.table}' is not a date type")
+        for column in source.filters:
+            if column not in types:
+                raise PlanError(f"filter column '{column}' not found in '{source.table}'")
+            if types[column] not in catalog.TEXT_TYPES:
+                raise PlanError(f"filter column '{column}' in '{source.table}' is {types[column]}, not text")
         for output, column in source.metrics.items():
             if column not in types:
                 raise PlanError(f"column '{column}' not found in '{source.table}'")
@@ -58,6 +63,7 @@ async def build_dataset(pool: AsyncConnectionPool, schema: str, org_id: str, pla
             [source.metrics[name] for name in names],
             plan.date_start,
             plan.date_end,
+            filters=source.filters or None,
         )
         for row in rows:
             day_values = by_day.setdefault(row["date"], {})
