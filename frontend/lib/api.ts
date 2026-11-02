@@ -4,24 +4,32 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://loca
 
 export class ApiError extends Error {
   status: number;
+  detail: Record<string, unknown> | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, detail: Record<string, unknown> | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
 export async function raiseForStatus(res: Response): Promise<void> {
   if (res.ok) return;
   let message = res.statusText || "Request failed";
+  let detail: Record<string, unknown> | null = null;
   try {
     const body = (await res.json()) as { detail?: unknown };
-    if (typeof body.detail === "string") message = body.detail;
+    if (typeof body.detail === "string") {
+      message = body.detail;
+    } else if (body.detail && typeof body.detail === "object") {
+      detail = body.detail as Record<string, unknown>;
+      if (typeof detail.reason === "string") message = detail.reason;
+    }
   } catch {
     // Non-JSON error body; keep the status text.
   }
-  throw new ApiError(res.status, message);
+  throw new ApiError(res.status, message, detail);
 }
 
 export async function apiGet<T>(path: string, token: string | null = getAccessToken()): Promise<T> {
@@ -42,6 +50,16 @@ export async function apiPostJson<T>(path: string, token: string, body: unknown)
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
+  return (await res.json()) as T;
+}
+
+export async function apiDelete<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
   await raiseForStatus(res);

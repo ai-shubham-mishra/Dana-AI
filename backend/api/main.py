@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from functools import partial
 
@@ -15,6 +15,7 @@ from integrations.auth.jwt_secret import load_jwt_secret
 from integrations.checkpoint.mongo import create_mongo_checkpointer
 from integrations.deployments.leases import PortLeases
 from integrations.deployments.service import DeploymentService
+from integrations.model_registry.lifecycle import ModelLifecycle, run_purge_loop
 from integrations.model_registry.registry import ModelRegistry
 from integrations.mongo.client import create_mongo_client, ensure_indexes
 from integrations.postgres.client import create_readonly_pool
@@ -96,9 +97,16 @@ def create_app(
             await app.state.deployments.reconcile()
         except Exception:
             logger.exception("Could not reconcile deployments left over from a previous run")
+        app.state.model_lifecycle = ModelLifecycle(
+            registry=registry, training=app.state.training, deployments=app.state.deployments
+        )
+        purge_task = asyncio.create_task(run_purge_loop(app.state.model_lifecycle))
         try:
             yield
         finally:
+            purge_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await purge_task
             await app.state.deployments.close()
             await deployments_http.aclose()
             await app.state.training.close()

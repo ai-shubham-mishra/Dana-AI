@@ -170,7 +170,7 @@ export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
       <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
         <NavLink href="/connectors" label="Connectors" icon={Database} active={pathname.startsWith("/connectors")} collapsed={collapsed} />
         <NavLink href="/jobs" label="Jobs" icon={LayoutDashboard} active={pathname.startsWith("/jobs")} collapsed={collapsed} />
-        <NavLink href="/model-versions" label="Models" icon={Boxes} active={pathname.startsWith("/model-versions")} collapsed={collapsed} />
+        <NavLink href="/models" label="Models" icon={Boxes} active={pathname.startsWith("/models")} collapsed={collapsed} />
 
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1">

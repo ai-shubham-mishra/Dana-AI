@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import Field, ValidationError
 
 from agent.tools.base import BaseTool, ToolInput, ToolOutput
+from integrations.model_registry.registry import ModelNameTaken
 from integrations.training.mmm.plan import MMMPlan, PlanError, PreparationSpec, SourceSpec
 from integrations.training.scope import current_scope
 
@@ -11,6 +12,9 @@ START_MMM_RUN_TOOL = "start_mmm_run"
 
 
 class StartMmmRunInput(ToolInput):
+    model_name: str = Field(
+        description="Unique name for the new model, asked from the user first. Must not match an existing model name. Max 80 characters."
+    )
     kpi: str = Field(description="Output name of the KPI to predict. Must be one of the mapped metric outputs.")
     channels: list[str] = Field(description="Output names of the marketing channels to model, all from the mapped metrics.")
     controls: list[str] = Field(
@@ -75,7 +79,7 @@ class StartMmmRunTool(BaseTool):
         "the user answered the training-window question."
     )
     allowed_decisions = ["approve", "edit", "reject"]
-    approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}, preparation {preparation}?"
+    approval_summary = "Start MMM model '{model_name}' for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}, preparation {preparation}?"
 
     def get_input_schema(self) -> type[ToolInput]:
         return StartMmmRunInput
@@ -92,6 +96,7 @@ class StartMmmRunTool(BaseTool):
         scope = current_scope()
         if scope is None:
             return ToolOutput(success=False, error="Training is unavailable in this context, so no run was started.")
+        model_name = kwargs.pop("model_name", None)
         try:
             plan = MMMPlan(**kwargs)
             job_id = await scope.service.submit_mmm_plan(
@@ -99,6 +104,16 @@ class StartMmmRunTool(BaseTool):
                 user_id=scope.user_id,
                 chat_id=scope.chat_id,
                 plan=plan,
+                model_name=model_name,
+            )
+        except ModelNameTaken as exc:
+            suggestions = ", ".join(exc.suggestions) or "none available"
+            return ToolOutput(
+                success=False,
+                error=(
+                    f"A model named '{exc.name}' already exists. Ask the user to pick a different name, "
+                    f"offering these unique suggestions: {suggestions}. Then call start_mmm_run again with the chosen name."
+                ),
             )
         except (ValidationError, PlanError) as exc:
             return ToolOutput(

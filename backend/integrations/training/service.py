@@ -13,6 +13,7 @@ from typing import Any
 from azure.core.exceptions import ResourceNotFoundError
 
 from config.settings import BACKEND_ROOT, Settings
+from integrations.model_registry.registry import InvalidModelName, ModelNameTaken, normalize_model_name
 from integrations.training.mmm.dataset import build_dataset, validate_sources
 from integrations.training.mmm.plan import MMMPlan, PlanError
 from integrations.training.mmm.recipe import build_config, dump_config, render_script
@@ -112,12 +113,16 @@ class TrainingService:
         chat_id: str,
         plan: MMMPlan,
         model_id: str | None = None,
+        model_name: str | None = None,
         source: str = "train",
         source_version: int | None = None,
         actor_email: str | None = None,
     ) -> str:
         if self._connector_pool is None:
             raise PlanError("connector data is not configured for training")
+        stored_name = None
+        if model_id is None:
+            stored_name = await self._check_new_model_name(org_id=org_id, user_id=user_id, raw=model_name)
         await validate_sources(self._connector_pool, self._datasets_schema, plan)
         job_id = uuid.uuid4().hex
         now = _now()
@@ -138,6 +143,7 @@ class TrainingService:
                 "metrics": None,
                 "artifact": None,
                 "model_id": model_id,
+                "model_name": stored_name,
                 "model_version": None,
                 "source": source,
                 "source_version": source_version,
@@ -151,6 +157,18 @@ class TrainingService:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job_id
+
+    async def _check_new_model_name(self, *, org_id: str, user_id: str, raw: str | None) -> str:
+        if self._models is None:
+            raise PlanError("model registry is not configured")
+        try:
+            name = normalize_model_name(raw)
+        except InvalidModelName as exc:
+            raise PlanError(str(exc)) from exc
+        if await self._models.name_taken(org_id=org_id, user_id=user_id, name=name):
+            suggestions = await self._models.suggest_names(org_id=org_id, user_id=user_id, base=name)
+            raise ModelNameTaken(name, suggestions)
+        return name
 
     async def retrain_version(
         self,
@@ -462,8 +480,8 @@ class TrainingService:
         try:
             job = await self._db.jobs.find_one(
                 {"id": job_id},
-                {"_id": 0, "params": 1, "metrics": 1, "artifact": 1, "model_id": 1, "source": 1,
-                 "source_version": 1, "requested_by_email": 1},
+                {"_id": 0, "params": 1, "metrics": 1, "artifact": 1, "model_id": 1, "model_name": 1,
+                 "source": 1, "source_version": 1, "requested_by_email": 1},
             )
             kpi = str((job.get("params") or {}).get("kpi", "model"))
             version = await self._models.record_version(
@@ -474,7 +492,7 @@ class TrainingService:
                 metrics=job.get("metrics"),
                 artifact=job.get("artifact"),
                 actor_email=job.get("requested_by_email"),
-                name=f"MMM · {kpi}",
+                name=job.get("model_name") or f"MMM · {kpi}",
                 kpi=kpi,
                 model_id=job.get("model_id"),
                 source=job.get("source") or "train",

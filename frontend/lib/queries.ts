@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiPost, apiPostJson, ApiError } from "./api";
+import { apiDelete, apiGet, apiPost, apiPostJson, ApiError } from "./api";
 import { useAccessToken } from "./auth";
 import type {
   ChatMessage,
@@ -10,6 +10,7 @@ import type {
   ConnectorPage,
   ConnectorSummary,
   DeleteJobsResult,
+  DeleteModelResult,
   Deployment,
   JobDetail,
   JobSummary,
@@ -178,5 +179,41 @@ export function useRetrainVersion() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["jobs", token] });
     },
+  });
+}
+
+function useInvalidateModelData() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["models", token] }),
+      queryClient.invalidateQueries({ queryKey: ["model", token] }),
+      queryClient.invalidateQueries({ queryKey: ["deployments", token] }),
+      queryClient.invalidateQueries({ queryKey: ["jobs", token] }),
+    ]);
+  };
+}
+
+export function useDeleteModel() {
+  const token = useAccessToken();
+  const invalidate = useInvalidateModelData();
+  return useMutation<DeleteModelResult, ApiError, { modelId: string; deallocate: boolean }>({
+    mutationFn: ({ modelId, deallocate }) =>
+      apiDelete<DeleteModelResult>(`/api/v1/models/${encodeURIComponent(modelId)}?deallocate=${deallocate}`, token ?? ""),
+    onSettled: invalidate,
+  });
+}
+
+export function useDeleteVersion() {
+  const token = useAccessToken();
+  const invalidate = useInvalidateModelData();
+  return useMutation<DeleteModelResult, ApiError, { modelId: string; version: number; deallocate: boolean }>({
+    mutationFn: ({ modelId, version, deallocate }) =>
+      apiDelete<DeleteModelResult>(
+        `/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}?deallocate=${deallocate}`,
+        token ?? "",
+      ),
+    onSettled: invalidate,
   });
 }
