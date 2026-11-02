@@ -56,7 +56,7 @@ Frontend styling follows the analytics-studio branding.
      --reload-dir integrations --reload-dir middlewares
    ```
 
-   Training run folders live in `var/training/<job_id>/` at the repo root by default (override with `TRAINING_OUTPUT_DIR`), outside `backend/`. Uvicorn's reloader watches every `*.py` under `backend/`, so a run's `train.py` written inside the repo would restart the server and cancel the job in flight. `--reload-dir` still limits reloads to source packages.
+   Training run folders live in `var/training/<job_id>/` and provisioning build contexts in `var/provisioning/` at the repo root by default (override with `TRAINING_OUTPUT_DIR` / `PROVISIONING_WORKDIR`), outside `backend/`. Uvicorn's reloader watches every `*.py` under `backend/`, so a build or run folder written inside the repo would restart the server, cancel the job in flight, and mark a container deployment as interrupted. `--reload-dir` still limits reloads to source packages.
 
 3. Frontend (in a second terminal):
 

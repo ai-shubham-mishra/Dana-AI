@@ -72,6 +72,14 @@ def test_config_defaults_and_env_overrides(tmp_path):
 
 # --- model source -----------------------------------------------------------
 
+def test_default_workdir_is_repo_var_outside_reload_watched_tree():
+    from config.settings import BACKEND_ROOT
+
+    default = ProvisioningConfig().workdir
+    assert default == BACKEND_ROOT.parent / "var" / "provisioning"
+    assert not default.is_relative_to(BACKEND_ROOT)
+
+
 def test_model_source_resolves_run_model(tmp_path):
     _model(tmp_path, "abc")
     artifact = LocalTrainingModelSource(tmp_path).resolve("abc")

@@ -15,7 +15,7 @@ class ProvisioningConfig:
     repo_url: str = "https://github.com/EliyaHome/Analytics-Studio-Agentic-Backend.git"
     repo_branch: str = "staging"
     library_subdir: str = "mmm-library"
-    workdir: Path = BACKEND_ROOT / "var" / "provisioning"
+    workdir: Path = BACKEND_ROOT.parent / "var" / "provisioning"
     training_root: Path = BACKEND_ROOT.parent / "var" / "training"
     image_repo: str = "dana-mmm-api"
     container_port: int = 5001
