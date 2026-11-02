@@ -47,12 +47,16 @@ class FakeOrchestrator:
     def container_name(instance_id):
         return f"dana-mmm-{instance_id}"
 
-    def provision(self, run_id, deploy_cloud=True, *, instance_id=None, host_port=None, log=None):
+    def provision(self, run_id, deploy_cloud=True, *, instance_id=None, host_port=None, log=None, progress=None):
         if self.gate is not None:
             self.gate.wait(5)
+        if progress:
+            progress("Building the container image", 40)
         log("Building the container image")
         if self.fail:
             raise RuntimeError("docker build failed")
+        if progress:
+            progress("Starting the container", 80)
         log("Starting the container")
         self.provisioned.append((run_id, instance_id, host_port))
 
@@ -124,6 +128,8 @@ def test_allocate_goes_live_and_deallocate_releases_port(settings, tmp_path):
         await wait_idle(service)
         dep = await service.get(org_id=ORG_A, user_id=USER_1, dep_id=created["id"])
         assert dep["status"] == "running"
+        assert dep["stage"] == "Live"
+        assert dep["percent"] == 100
         assert dep["health"]["state"] == "live"
         assert dep["url"] == f"http://127.0.0.1:{dep['host_port']}"
         assert orch.provisioned == [("job-1", created["id"], dep["host_port"])]
@@ -187,6 +193,7 @@ def test_failed_provision_marks_failed_and_frees_port(settings, tmp_path):
         await wait_idle(service)
         dep = await service.get(org_id=ORG_A, user_id=USER_1, dep_id=created["id"])
         assert dep["status"] == "failed"
+        assert dep["stage"] == "Failed"
         assert dep["error"] == "docker build failed"
         assert await db.port_leases.count_documents({}) == 0
         assert orch.removed == [created["id"]]

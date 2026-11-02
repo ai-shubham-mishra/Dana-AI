@@ -36,6 +36,7 @@ class StartTrainingJobTool(BaseTool):
                 kpi=kpi,
                 channels=channels,
                 date_range=date_range,
+                actor_email=scope.actor_email,
             )
         except RequestError as exc:
             return ToolOutput(

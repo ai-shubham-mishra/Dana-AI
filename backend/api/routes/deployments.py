@@ -25,6 +25,8 @@ class Deployment(BaseModel):
     version: int
     job_id: str
     status: str
+    stage: str | None = None
+    percent: int = 0
     host_port: int
     url: str
     container: str

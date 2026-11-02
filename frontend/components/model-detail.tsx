@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, Loader2, Play, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
+import { ChevronLeft, Loader2, Play, RefreshCw, Square, Tag, Terminal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -10,6 +10,7 @@ import { DeleteModelDialog } from "@/components/delete-model-dialog";
 import { KeyValueTree } from "@/components/key-value-tree";
 import { LogTerminal } from "@/components/log-terminal";
 import { HEALTH_STYLE, HealthPill, Pill, formatWhen, modelHref, normalizeModelName } from "@/components/models-ui";
+import { ProvisionProgress } from "@/components/provision-progress";
 import { RetrainDialog } from "@/components/retrain-dialog";
 import { useDeploymentLogs } from "@/lib/deployment-logs";
 import {
@@ -21,6 +22,7 @@ import {
   useModel,
   useModels,
   useRetrainVersion,
+  useSetVersionTag,
 } from "@/lib/queries";
 import type { ApiError } from "@/lib/api";
 import type { Deployment, ModelSummary, ModelVersion } from "@/lib/types";
@@ -124,6 +126,9 @@ function DeploymentCard({ deployment }: { deployment: Deployment }) {
             <span className="text-sm font-semibold">v{deployment.version}</span>
             <Pill tone={HEALTH_STYLE[deployment.status] ?? HEALTH_STYLE.stopped}>{deployment.status}</Pill>
             <HealthPill state={deployment.health.state} />
+            {deployment.status === "provisioning" && deployment.stage ? (
+              <span className="text-xs text-muted-foreground">{deployment.stage}</span>
+            ) : null}
           </div>
           <a
             href={deployment.url}
@@ -134,7 +139,7 @@ function DeploymentCard({ deployment }: { deployment: Deployment }) {
             {deployment.url}
           </a>
           <div className="mt-0.5 text-xs text-muted-foreground">
-            Port {deployment.host_port} · {deployment.created_by_email ?? "unknown"} · {formatWhen(deployment.created_at)}
+            Port {deployment.host_port} · {deployment.created_by_email ?? "not recorded"} · {formatWhen(deployment.created_at)}
           </div>
         </div>
 
@@ -214,7 +219,10 @@ function VersionRow({
   onRetrain,
   onAllocate,
   onDelete,
+  onTag,
   allocating,
+  tagging,
+  provisioning,
 }: {
   version: ModelVersion;
   selected: boolean;
@@ -222,8 +230,14 @@ function VersionRow({
   onRetrain: () => void;
   onAllocate: () => void;
   onDelete: () => void;
+  onTag: (tag: string) => void;
   allocating: boolean;
+  tagging: boolean;
+  provisioning: Deployment | null;
 }) {
+  const [draft, setDraft] = useState("");
+  const tags = version.tags ?? [];
+  const busy = allocating || provisioning !== null;
   return (
     <li
       className={cn(
@@ -232,7 +246,20 @@ function VersionRow({
       )}
     >
       <button type="button" onClick={onSelect} className="min-w-0 text-left">
-        <div className="text-sm font-semibold">Version {version.version}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">Version {version.version}</span>
+          {tags.map((tag) => (
+            <span
+              key={tag}
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                tag === "latest" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
+              )}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
         <div className="text-xs text-muted-foreground">
           {version.source}
           {version.source_version ? ` from v${version.source_version}` : ""}
@@ -240,6 +267,33 @@ function VersionRow({
         </div>
       </button>
       <div className="flex flex-wrap items-center gap-2">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            const tag = draft.trim().toLowerCase();
+            if (!tag) return;
+            onTag(tag);
+            setDraft("");
+          }}
+          className="flex items-center gap-1"
+        >
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            maxLength={32}
+            placeholder="tag"
+            aria-label={`Tag version ${version.version}`}
+            className="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none focus:border-primary"
+          />
+          <button
+            type="submit"
+            disabled={!draft.trim() || tagging}
+            className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+          >
+            {tagging ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Tag className="size-3.5" aria-hidden />}
+            Tag
+          </button>
+        </form>
         <button
           type="button"
           onClick={onRetrain}
@@ -251,11 +305,12 @@ function VersionRow({
         <button
           type="button"
           onClick={onAllocate}
-          disabled={allocating}
-          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          disabled={busy}
+          aria-busy={busy}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {allocating ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
-          Allocate container
+          {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+          {provisioning ? "Allocating…" : "Allocate container"}
         </button>
         <button
           type="button"
@@ -266,6 +321,11 @@ function VersionRow({
           <Trash2 className="size-3.5" aria-hidden />
         </button>
       </div>
+      {provisioning ? (
+        <div className="basis-full">
+          <ProvisionProgress percent={provisioning.percent} stage={provisioning.stage} />
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -277,6 +337,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
   const model = useModel(modelId);
   const deployments = useDeployments();
   const allocate = useAllocateDeployment();
+  const setTag = useSetVersionTag();
   const retrain = useRetrainVersion();
   const deleteModel = useDeleteModel();
   const deleteVersion = useDeleteVersion();
@@ -364,6 +425,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
       </header>
 
       {allocate.error ? <p className="text-sm text-destructive">{allocate.error.message}</p> : null}
+      {setTag.error ? <p className="text-sm text-destructive">{setTag.error.message}</p> : null}
 
       <CollapsibleSection title="Versions" count={versions.length}>
         <ul className="space-y-2">
@@ -380,6 +442,11 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
                 setDeleteTarget({ kind: "version", version });
               }}
               allocating={allocate.isPending && allocate.variables?.version === version.version}
+              provisioning={
+                activeDeployments.find((d) => d.version === version.version && d.status === "provisioning") ?? null
+              }
+              onTag={(tag) => setTag.mutate({ modelId, version: version.version, tag })}
+              tagging={setTag.isPending && setTag.variables?.version === version.version}
             />
           ))}
         </ul>

@@ -209,6 +209,7 @@ class TrainingService:
         kpi: str,
         channels: list[str],
         date_range: str,
+        actor_email: str | None = None,
     ) -> str:
         request = validate_request(
             model=model, kpi=kpi, channels=channels, date_range=date_range, spec=self._spec
@@ -221,6 +222,7 @@ class TrainingService:
                 "org_id": org_id,
                 "user_id": user_id,
                 "chat_id": chat_id,
+                "requested_by_email": actor_email,
                 "title": _title(request),
                 "kind": JOB_KIND,
                 "status": "queued",

@@ -66,6 +66,16 @@ export async function apiDelete<T>(path: string, token: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export async function apiPut<T>(path: string, token: string): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
+  return (await res.json()) as T;
+}
+
 export async function apiPost<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",

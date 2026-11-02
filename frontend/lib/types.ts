@@ -126,6 +126,7 @@ export type ModelVersion = {
   params: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   created_by_email: string | null;
+  tags: string[];
   created_at: string;
 };
 
@@ -156,6 +157,8 @@ export type Deployment = {
   url: string;
   container: string;
   message: string | null;
+  stage: string | null;
+  percent: number;
   error: string | null;
   created_by_email: string | null;
   created_at: string;

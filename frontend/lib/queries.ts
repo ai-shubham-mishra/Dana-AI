@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiDelete, apiGet, apiPost, apiPostJson, ApiError } from "./api";
+import { apiDelete, apiGet, apiPost, apiPostJson, apiPut, ApiError } from "./api";
 import { useAccessToken } from "./auth";
 import type {
   ChatMessage,
@@ -212,6 +212,19 @@ export function useDeleteVersion() {
     mutationFn: ({ modelId, version, deallocate }) =>
       apiDelete<DeleteModelResult>(
         `/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}?deallocate=${deallocate}`,
+        token ?? "",
+      ),
+    onSettled: invalidate,
+  });
+}
+
+export function useSetVersionTag() {
+  const token = useAccessToken();
+  const invalidate = useInvalidateModelData();
+  return useMutation<ModelDetail, ApiError, { modelId: string; version: number; tag: string }>({
+    mutationFn: ({ modelId, version, tag }) =>
+      apiPut<ModelDetail>(
+        `/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/tags/${encodeURIComponent(tag)}`,
         token ?? "",
       ),
     onSettled: invalidate,

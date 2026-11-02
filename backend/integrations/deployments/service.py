@@ -81,6 +81,8 @@ class DeploymentService:
             "host_port": port,
             "container": self._orchestrator.container_name(dep_id),
             "message": "Building the container image",
+            "stage": "Queued",
+            "percent": 0,
             "error": None,
             "created_by_email": actor_email,
             "created_at": now,
@@ -170,17 +172,25 @@ class DeploymentService:
         self, dep_id: str, org_id: str, user_id: str, model_id: str, version: int, job_id: str, port: int
     ) -> None:
         path = self.log_path(dep_id)
+        loop = asyncio.get_running_loop()
 
         def sink(line: str) -> None:
             append_line(path, line)
 
+        def progress(stage: str, percent: int) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                self._update(dep_id, stage=stage, percent=percent), loop
+            )
+            future.result(timeout=30)
+
         try:
             await asyncio.to_thread(
-                self._orchestrator.provision, job_id, False, instance_id=dep_id, host_port=port, log=sink
+                self._orchestrator.provision, job_id, False, instance_id=dep_id, host_port=port,
+                log=sink, progress=progress,
             )
             container = self._orchestrator.container_name(dep_id)
             self._followers[dep_id] = self._orchestrator.runtime.follow_logs(container, sink)
-            await self._update(dep_id, status="running", message="Live", error=None)
+            await self._update(dep_id, status="running", message="Live", stage="Live", percent=100, error=None)
             sink(f"Deployment is live at {base_url(port)}")
         except asyncio.CancelledError:
             raise
@@ -188,7 +198,7 @@ class DeploymentService:
             logger.exception("Deployment %s failed to provision", dep_id)
             sink(f"Provisioning failed: {exc}")
             await self._teardown(dep_id)
-            await self._update(dep_id, status="failed", message="Provisioning failed", error=str(exc))
+            await self._update(dep_id, status="failed", message="Provisioning failed", stage="Failed", error=str(exc))
             await self._registry.record_event(
                 org_id=org_id, user_id=user_id, model_id=model_id, action="deployment_failed",
                 version=version, actor_email=None, detail=f"deployment {dep_id} failed: {exc}",

@@ -14,9 +14,15 @@ ARCHIVE_RETENTION = timedelta(days=7)
 MODEL_NAME_MAX = 80
 MODEL_NAME_RE = re.compile(r"^\w[\w \-.()·]*$")
 NAME_SUFFIX_BYTES = 3
+LATEST_TAG = "latest"
+TAG_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
 class InvalidModelName(ValueError):
+    pass
+
+
+class InvalidTag(ValueError):
     pass
 
 
@@ -93,8 +99,12 @@ class ModelRegistry:
             "metrics": metrics,
             "artifact": artifact,
             "created_by_email": actor_email,
+            "tags": [LATEST_TAG],
             "created_at": now,
         }
+        await self._db.model_versions.update_many(
+            {**scope, "model_id": model_id, "tags": LATEST_TAG}, {"$pull": {"tags": LATEST_TAG}}
+        )
         await self._db.model_versions.insert_one(doc)
         await self._db.models.update_one(
             {**scope, "id": model_id},
@@ -124,10 +134,38 @@ class ModelRegistry:
         )
 
     async def list_versions(self, *, org_id: str, user_id: str, model_id: str) -> list[dict[str, Any]]:
+        scope = {"org_id": org_id, "user_id": user_id, "model_id": model_id}
+        await self._ensure_latest(scope)
         cursor = self._db.model_versions.find(
-            {"org_id": org_id, "user_id": user_id, "model_id": model_id, "archived_at": None}, VERSION_PROJECTION
+            {**scope, "archived_at": None}, VERSION_PROJECTION
         ).sort("version", DESCENDING)
         return [doc async for doc in cursor]
+
+    async def set_tag(
+        self, *, org_id: str, user_id: str, model_id: str, version: int, tag: str, actor_email: str | None
+    ) -> None:
+        if not TAG_RE.fullmatch(tag):
+            raise InvalidTag("tags are 1-32 characters: lowercase letters, digits, '-' or '_', starting with a letter")
+        scope = {"org_id": org_id, "user_id": user_id, "model_id": model_id}
+        target = await self._db.model_versions.find_one({**scope, "version": version, "archived_at": None}, {"_id": 1})
+        if target is None:
+            raise LookupError(f"version {version} not found")
+        await self._db.model_versions.update_many({**scope, "tags": tag}, {"$pull": {"tags": tag}})
+        await self._db.model_versions.update_one({**scope, "version": version}, {"$addToSet": {"tags": tag}})
+        await self.record_event(
+            org_id=org_id, user_id=user_id, model_id=model_id, action="tag_set",
+            version=version, actor_email=actor_email, detail=f"{tag} set to v{version}",
+        )
+
+    async def _ensure_latest(self, scope: dict[str, str]) -> None:
+        live_filter = {**scope, "archived_at": None}
+        if await self._db.model_versions.find_one({**live_filter, "tags": LATEST_TAG}, {"_id": 1}) is not None:
+            return
+        newest = await self._db.model_versions.find_one(live_filter, {"version": 1}, sort=[("version", DESCENDING)])
+        if newest is not None:
+            await self._db.model_versions.update_one(
+                {**scope, "version": newest["version"]}, {"$addToSet": {"tags": LATEST_TAG}}
+            )
 
     async def get_version(self, *, org_id: str, user_id: str, model_id: str, version: int) -> dict[str, Any] | None:
         return await self._db.model_versions.find_one(
@@ -187,6 +225,7 @@ class ModelRegistry:
     async def _refresh_model(self, scope: dict[str, str], now: datetime) -> None:
         live_filter = {**scope, "archived_at": None}
         live = await self._db.model_versions.find_one(live_filter, {"version": 1}, sort=[("version", DESCENDING)])
+        await self._ensure_latest(scope)
         count = await self._db.model_versions.count_documents(live_filter)
         await self._db.models.update_one(
             {"org_id": scope["org_id"], "user_id": scope["user_id"], "id": scope["model_id"]},

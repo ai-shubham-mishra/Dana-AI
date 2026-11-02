@@ -84,6 +84,7 @@ class RetrainModelVersionTool(BaseTool):
                 chat_id=scope.chat_id,
                 model_id=model_id,
                 version=version,
+                actor_email=scope.actor_email,
             )
         except LookupError as exc:
             return ToolOutput(success=False, error=f"{exc}. Call list_model_versions to see the available versions.")

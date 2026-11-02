@@ -105,6 +105,7 @@ class StartMmmRunTool(BaseTool):
                 chat_id=scope.chat_id,
                 plan=plan,
                 model_name=model_name,
+                actor_email=scope.actor_email,
             )
         except ModelNameTaken as exc:
             suggestions = ", ".join(exc.suggestions) or "none available"

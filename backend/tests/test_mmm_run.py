@@ -391,7 +391,7 @@ class RecordingService:
     def __init__(self):
         self.plans: list[MMMPlan] = []
 
-    async def submit_mmm_plan(self, *, org_id, user_id, chat_id, plan, model_name=None):
+    async def submit_mmm_plan(self, *, org_id, user_id, chat_id, plan, model_name=None, actor_email=None):
         self.plans.append(plan)
         return "job-123"
 
