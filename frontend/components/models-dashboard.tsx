@@ -394,16 +394,18 @@ export function ModelsDashboard() {
   const activeModelId = selectedModelId ?? models.data?.[0]?.id ?? null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
-      <ModelList selectedId={activeModelId} onSelect={setSelectedModelId} deployments={deployments.data ?? []} />
-      {activeModelId ? (
-        <ModelWorkspace key={activeModelId} modelId={activeModelId} deployments={deployments.data ?? []} />
-      ) : (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-12 text-center">
-          <Boxes className="mb-3 size-8 text-muted-foreground" aria-hidden />
-          <p className="text-sm text-muted-foreground">Select a model to see its versions and containers.</p>
-        </div>
-      )}
+    <div className="mx-auto w-full max-w-7xl p-6 md:p-10">
+      <div className="grid items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
+        <ModelList selectedId={activeModelId} onSelect={setSelectedModelId} deployments={deployments.data ?? []} />
+        {activeModelId ? (
+          <ModelWorkspace key={activeModelId} modelId={activeModelId} deployments={deployments.data ?? []} />
+        ) : (
+          <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-border p-12 text-center">
+            <Boxes className="mb-3 size-8 text-muted-foreground" aria-hidden />
+            <p className="text-sm text-muted-foreground">Select a model to see its versions and containers.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
