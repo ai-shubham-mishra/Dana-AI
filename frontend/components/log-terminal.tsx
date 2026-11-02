@@ -18,7 +18,7 @@ const STATE_STYLE: Record<LogStreamState, string> = {
   idle: "bg-white/10 text-white/60",
   connecting: "bg-amber-400/15 text-amber-300",
   streaming: "bg-teal/20 text-teal",
-  ended: "bg-white/10 text-white/70",
+  ended: "bg-red-500/20 text-red-300",
   error: "bg-red-500/20 text-red-300",
 };
 

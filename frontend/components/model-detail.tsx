@@ -1,16 +1,16 @@
 "use client";
 
-import { ChevronLeft, Loader2, Play, RefreshCw, Square, Tag, Terminal, Trash2 } from "lucide-react";
+import { ChevronLeft, Loader2, Play, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { CollapsibleSection } from "@/components/collapsible-section";
 import { DeleteModelDialog } from "@/components/delete-model-dialog";
 import { KeyValueTree } from "@/components/key-value-tree";
 import { LogTerminal } from "@/components/log-terminal";
 import { HEALTH_STYLE, HealthPill, Pill, formatWhen, modelHref, normalizeModelName } from "@/components/models-ui";
-import { ProvisionProgress } from "@/components/provision-progress";
+import { JobProgressBar } from "@/components/job-primitives";
 import { RetrainDialog } from "@/components/retrain-dialog";
 import { useDeploymentLogs } from "@/lib/deployment-logs";
 import {
@@ -19,10 +19,10 @@ import {
   useDeleteModel,
   useDeleteVersion,
   useDeployments,
+  useJobs,
   useModel,
   useModels,
   useRetrainVersion,
-  useSetVersionTag,
 } from "@/lib/queries";
 import type { ApiError } from "@/lib/api";
 import type { Deployment, ModelSummary, ModelVersion } from "@/lib/types";
@@ -219,10 +219,8 @@ function VersionRow({
   onRetrain,
   onAllocate,
   onDelete,
-  onTag,
   allocating,
-  tagging,
-  provisioning,
+  deployment,
 }: {
   version: ModelVersion;
   selected: boolean;
@@ -230,14 +228,12 @@ function VersionRow({
   onRetrain: () => void;
   onAllocate: () => void;
   onDelete: () => void;
-  onTag: (tag: string) => void;
   allocating: boolean;
-  tagging: boolean;
-  provisioning: Deployment | null;
+  deployment: Deployment | null;
 }) {
-  const [draft, setDraft] = useState("");
   const tags = version.tags ?? [];
-  const busy = allocating || provisioning !== null;
+  const provisioning = deployment?.status === "provisioning";
+  const busy = allocating || deployment !== null;
   return (
     <li
       className={cn(
@@ -248,6 +244,14 @@ function VersionRow({
       <button type="button" onClick={onSelect} className="min-w-0 text-left">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">Version {version.version}</span>
+          {version.job_id ? (
+            <span
+              title={version.job_id}
+              className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+            >
+              job {version.job_id.slice(0, 8)}
+            </span>
+          ) : null}
           {tags.map((tag) => (
             <span
               key={tag}
@@ -267,33 +271,6 @@ function VersionRow({
         </div>
       </button>
       <div className="flex flex-wrap items-center gap-2">
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const tag = draft.trim().toLowerCase();
-            if (!tag) return;
-            onTag(tag);
-            setDraft("");
-          }}
-          className="flex items-center gap-1"
-        >
-          <input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            maxLength={32}
-            placeholder="tag"
-            aria-label={`Tag version ${version.version}`}
-            className="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none focus:border-primary"
-          />
-          <button
-            type="submit"
-            disabled={!draft.trim() || tagging}
-            className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
-          >
-            {tagging ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Tag className="size-3.5" aria-hidden />}
-            Tag
-          </button>
-        </form>
         <button
           type="button"
           onClick={onRetrain}
@@ -307,10 +284,11 @@ function VersionRow({
           onClick={onAllocate}
           disabled={busy}
           aria-busy={busy}
+          title={deployment && !provisioning ? "This version already has a running container. Deallocate it to allocate again." : undefined}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
-          {provisioning ? "Allocating…" : "Allocate container"}
+          {allocating || provisioning ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+          {provisioning ? "Allocating…" : deployment ? "Container running" : "Allocate container"}
         </button>
         <button
           type="button"
@@ -321,9 +299,13 @@ function VersionRow({
           <Trash2 className="size-3.5" aria-hidden />
         </button>
       </div>
-      {provisioning ? (
-        <div className="basis-full">
-          <ProvisionProgress percent={provisioning.percent} stage={provisioning.stage} />
+      {deployment && provisioning ? (
+        <div className="basis-full space-y-1.5">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="truncate text-muted-foreground">{deployment.stage ?? "Starting"}</span>
+            <span className="font-mono tabular-nums text-primary">{Math.round(deployment.percent)}%</span>
+          </div>
+          <JobProgressBar percent={deployment.percent} status="running" />
         </div>
       ) : null}
     </li>
@@ -336,8 +318,8 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
   const router = useRouter();
   const model = useModel(modelId);
   const deployments = useDeployments();
+  const jobs = useJobs();
   const allocate = useAllocateDeployment();
-  const setTag = useSetVersionTag();
   const retrain = useRetrainVersion();
   const deleteModel = useDeleteModel();
   const deleteVersion = useDeleteVersion();
@@ -346,6 +328,13 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
   const [retrainJobId, setRetrainJobId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const retrainJob = retrainJobId ? jobs.data?.find((job) => job.id === retrainJobId) : undefined;
+  const retrainFinished = retrainJob?.status === "succeeded" || retrainJob?.status === "failed";
+  const { refetch: refetchModel } = model;
+  useEffect(() => {
+    if (retrainFinished) void refetchModel();
+  }, [retrainFinished, refetchModel]);
 
   const versions = model.data?.versions ?? [];
   const current = versions.find((v) => v.version === selectedVersion) ?? versions[0] ?? null;
@@ -406,7 +395,9 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {retrainJobId ? (
-            <Pill tone={HEALTH_STYLE.live}>Retraining queued · job {retrainJobId.slice(0, 8)}</Pill>
+            <Pill tone={HEALTH_STYLE.live}>
+              Retrain job {retrainJobId.slice(0, 8)} · {retrainJob?.status ?? "queued"}
+            </Pill>
           ) : null}
           {model.data ? (
             <button
@@ -425,7 +416,6 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
       </header>
 
       {allocate.error ? <p className="text-sm text-destructive">{allocate.error.message}</p> : null}
-      {setTag.error ? <p className="text-sm text-destructive">{setTag.error.message}</p> : null}
 
       <CollapsibleSection title="Versions" count={versions.length}>
         <ul className="space-y-2">
@@ -442,11 +432,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
                 setDeleteTarget({ kind: "version", version });
               }}
               allocating={allocate.isPending && allocate.variables?.version === version.version}
-              provisioning={
-                activeDeployments.find((d) => d.version === version.version && d.status === "provisioning") ?? null
-              }
-              onTag={(tag) => setTag.mutate({ modelId, version: version.version, tag })}
-              tagging={setTag.isPending && setTag.variables?.version === version.version}
+              deployment={activeDeployments.find((d) => d.version === version.version) ?? null}
             />
           ))}
         </ul>

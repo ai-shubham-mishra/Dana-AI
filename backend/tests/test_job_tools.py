@@ -168,3 +168,62 @@ def test_service_reads_are_scoped_to_the_signed_in_user_and_org():
     assert foreign is None
     assert own["id"] == "old"
     assert not {"_id", "org_id", "user_id", "chat_id"} & set(own)
+
+
+class FailingRegistry:
+    async def record_version(self, **kwargs):
+        raise RuntimeError("version write rejected")
+
+
+def test_reconcile_marks_unfinished_jobs_failed_and_keeps_finished_ones():
+    settings = make_settings()
+
+    async def scenario():
+        client = AsyncIOMotorClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        db = client[TEST_DB]
+        await db.jobs.delete_many({})
+        await db.jobs.insert_many([
+            {**job_doc("queued-job", status="queued"), "org_id": ORG_A, "user_id": USER_1, "chat_id": "c1"},
+            {**job_doc("running-job", status="running"), "org_id": ORG_A, "user_id": USER_1, "chat_id": "c1"},
+            {**job_doc("done-job", status="succeeded"), "org_id": ORG_A, "user_id": USER_1, "chat_id": "c1"},
+        ])
+        service = TrainingService(db=db, blob=None, settings=settings)
+        try:
+            changed = await service.reconcile()
+            rows = {row["id"]: row async for row in db.jobs.find({}, {"_id": 0, "id": 1, "status": 1, "error": 1})}
+        finally:
+            await db.jobs.delete_many({})
+            client.close()
+        return changed, rows
+
+    changed, rows = asyncio.run(scenario())
+    assert changed == 2
+    assert rows["queued-job"]["status"] == "failed"
+    assert rows["running-job"]["status"] == "failed"
+    assert "server restart" in rows["running-job"]["error"]
+    assert rows["done-job"]["status"] == "succeeded"
+
+
+def test_failed_version_write_fails_the_job_instead_of_hiding_it():
+    settings = make_settings()
+
+    async def scenario():
+        client = AsyncIOMotorClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        db = client[TEST_DB]
+        await db.jobs.delete_many({})
+        await db.jobs.insert_one(
+            {**job_doc("trained-job", status="succeeded"), "org_id": ORG_A, "user_id": USER_1, "chat_id": "c1",
+             "model_id": "m1", "source": "retrain", "source_version": 1}
+        )
+        service = TrainingService(db=db, blob=None, settings=settings, model_registry=FailingRegistry())
+        try:
+            await service._record_version("trained-job", ORG_A, USER_1)
+            job = await db.jobs.find_one({"id": "trained-job"}, {"_id": 0, "status": 1, "error": 1})
+        finally:
+            await db.jobs.delete_many({})
+            client.close()
+        return job
+
+    job = asyncio.run(scenario())
+    assert job["status"] == "failed"
+    assert "could not be saved" in job["error"]

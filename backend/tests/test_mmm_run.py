@@ -390,9 +390,11 @@ def test_run_script_times_out_and_kills_the_process(tmp_path):
 class RecordingService:
     def __init__(self):
         self.plans: list[MMMPlan] = []
+        self.calls: list[dict] = []
 
-    async def submit_mmm_plan(self, *, org_id, user_id, chat_id, plan, model_name=None, actor_email=None):
-        self.plans.append(plan)
+    async def submit_mmm_plan(self, **kwargs):
+        self.plans.append(kwargs["plan"])
+        self.calls.append(kwargs)
         return "job-123"
 
 
@@ -445,6 +447,31 @@ def test_start_mmm_run_rejects_unsafe_identifiers_cleanly():
     result = run_tool(StartMmmRunTool(), args, service)
     assert result.startswith("Error:") and "not a valid connector table" in result
     assert service.plans == []
+
+
+def test_start_mmm_run_retrains_an_existing_model_by_id():
+    service = RecordingService()
+    result = run_tool(StartMmmRunTool(), tool_args(model_name="", model_id="model-1"), service)
+    assert "job-123" in result
+    assert service.calls[0]["model_id"] == "model-1"
+    assert service.calls[0]["model_name"] is None
+    assert service.calls[0]["source"] == "retrain"
+
+
+def test_start_mmm_run_needs_a_name_for_a_new_model():
+    service = RecordingService()
+    result = run_tool(StartMmmRunTool(), tool_args(model_name=""), service)
+    assert result.startswith("Error:") and "model_name" in result
+    assert service.calls == []
+
+
+def test_start_mmm_run_reports_an_unknown_model_id():
+    class MissingModelService(RecordingService):
+        async def submit_mmm_plan(self, **kwargs):
+            raise LookupError("model m-404 was not found")
+
+    result = run_tool(StartMmmRunTool(), tool_args(model_name="", model_id="m-404"), MissingModelService())
+    assert result.startswith("Error:") and "m-404" in result
 
 
 def test_start_mmm_run_is_registered_and_needs_approval():

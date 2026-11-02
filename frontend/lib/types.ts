@@ -166,6 +166,20 @@ export type Deployment = {
   health: { state: DeploymentHealthState; detail: string | null };
 };
 
+export type ArchivedDeployment = {
+  id: string;
+  model_id: string;
+  version: number;
+  status: DeploymentStatus;
+  host_port: number;
+  container: string;
+  created_by_email: string | null;
+  created_at: string;
+  archived_at: string;
+  purge_at: string;
+  days_remaining: number;
+};
+
 export type RetrainResult = { job_id: string };
 
 export type DeleteModelResult = {

@@ -149,6 +149,21 @@ def test_latest_tag_follows_the_newest_version_and_can_be_moved(settings, raw_db
     run_with_db(settings, body)
 
 
+def test_retraining_with_a_model_id_adds_a_version_and_never_a_new_model(settings, raw_db):
+    _seed_sync(raw_db)
+
+    async def body(db):
+        registry = ModelRegistry(db)
+        models_before = await db.models.count_documents({})
+        await registry.record_version(**_record_second_version())
+        assert await db.models.count_documents({}) == models_before
+        versions = await registry.list_versions(org_id=ORG_A, user_id=USER_1, model_id="m1")
+        assert sorted(v["version"] for v in versions) == [1, 2]
+        assert versions[0]["version"] == 2 and versions[0]["job_id"] == "job-2"
+
+    run_with_db(settings, body)
+
+
 def test_set_tag_validates_tag_and_target_version(settings, raw_db):
     _seed_sync(raw_db)
 
@@ -188,8 +203,8 @@ def test_mmm_run_passes_the_requesting_email_to_the_job():
     class EmailService(RecordingService):
         actor_email = "unset"
 
-        async def submit_mmm_plan(self, *, org_id, user_id, chat_id, plan, model_name=None, actor_email=None):
-            self.actor_email = actor_email
+        async def submit_mmm_plan(self, **kwargs):
+            self.actor_email = kwargs["actor_email"]
             return "job-123"
 
     service = EmailService()

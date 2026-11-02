@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiPost, apiPostJson, apiPut, ApiError } from "./api";
 import { useAccessToken } from "./auth";
 import type {
+  ArchivedDeployment,
   ChatMessage,
   ChatSummary,
   ConnectorPage,
@@ -147,6 +148,17 @@ export function useDeployments() {
   });
 }
 
+export function useDeploymentArchive() {
+  const token = useAccessToken();
+  return useQuery<ArchivedDeployment[], ApiError>({
+    queryKey: ["deployments-archive", token],
+    queryFn: () => apiGet<ArchivedDeployment[]>("/api/v1/deployments/archive", token),
+    enabled: Boolean(token),
+    refetchInterval: DEPLOYMENT_IDLE_POLL_MS,
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
+
 export function useAllocateDeployment() {
   const token = useAccessToken();
   const queryClient = useQueryClient();
@@ -177,7 +189,11 @@ export function useRetrainVersion() {
     mutationFn: ({ modelId, version }) =>
       apiPost<RetrainResult>(`/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/retrain`, token ?? ""),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["jobs", token] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["jobs", token] }),
+        queryClient.invalidateQueries({ queryKey: ["model", token] }),
+        queryClient.invalidateQueries({ queryKey: ["models", token] }),
+      ]);
     },
   });
 }

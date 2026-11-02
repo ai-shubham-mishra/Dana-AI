@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any
 
-from integrations.deployments.service import DeploymentBusy
+from integrations.deployments.service import DeploymentBusy, DeprovisionFailed
 from integrations.training.service import ACTIVE_STATUSES as TRAINING_ACTIVE_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class ModelLifecycle:
                     await self._deployments.deallocate(
                         org_id=org_id, user_id=user_id, dep_id=dep["id"], actor_email=actor_email
                     )
-                except DeploymentBusy as exc:
+                except (DeploymentBusy, DeprovisionFailed) as exc:
                     return {"outcome": "blocked", "reason": str(exc)}
                 stopped.append(dep["id"])
             await self._registry.archive_versions(
@@ -106,6 +106,8 @@ class ModelLifecycle:
 
     async def purge_due(self) -> int:
         purged = 0
+        if self._deployments is not None:
+            purged += await self._deployments.purge_due()
         for doc in await self._registry.due_purge():
             org_id, user_id = doc["org_id"], doc["user_id"]
             result = await self._training.delete_jobs(
