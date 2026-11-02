@@ -5,7 +5,7 @@ description: Ask the user one clarifying question with a typed answer (single se
 
 # ask_user
 
-Use this for each missing input that cannot be resolved with a tool. Do not ask for dates; resolve them with the calendar tools. Ask one question at a time.
+Use this for each missing input that cannot be resolved with a tool. Do not ask for dates; resolve them with the calendar tools, except the training window, which is always asked (see mmm-planning). Ask one question at a time.
 
 Pick the `response_type` that matches the answer:
 

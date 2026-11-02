@@ -71,7 +71,8 @@ class StartMmmRunTool(BaseTool):
     name: str = START_MMM_RUN_TOOL
     description: str = (
         "Start an MMM training run on the org's connector data. The dataset, config and training script are "
-        "generated for this run. A human must approve, edit, or reject the plan before this runs."
+        "generated for this run. A human must approve, edit, or reject the plan before this runs. Only call this after "
+        "the user answered the training-window question."
     )
     allowed_decisions = ["approve", "edit", "reject"]
     approval_summary = "Start an MMM run for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}, preparation {preparation}?"
