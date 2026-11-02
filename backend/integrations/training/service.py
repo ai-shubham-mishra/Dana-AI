@@ -100,6 +100,10 @@ class TrainingService:
         self._slots = asyncio.Semaphore(1)
         self._tasks: set[asyncio.Task] = set()
 
+    @property
+    def models(self) -> Any:
+        return self._models
+
     async def submit_mmm_plan(
         self,
         *,
