@@ -1,0 +1,119 @@
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from agent.tools.ml_ops.ml.training.start_mmm_run import StartMmmRunTool
+from integrations.model_registry.lifecycle import ModelLifecycle
+from integrations.model_registry.registry import InvalidModelName, ModelNameTaken, ModelRegistry, normalize_model_name
+from tests.test_api import ORG_A, USER_1, auth, member, mint, raw_db, settings, static_secret  # noqa: F401
+from tests.test_deployments import HEADERS, _seed_sync, _wait_for_status, api, run_with_db  # noqa: F401
+from tests.test_mmm_run import RecordingService, run_tool, tool_args
+
+
+class FakeTraining:
+    async def get_job(self, *, org_id, user_id, job_id):
+        return None
+
+    async def delete_jobs(self, *, org_id, user_id, job_ids, actor_email=None):
+        return {"deleted": [], "skipped": [{"id": job_id, "reason": "Job not found"} for job_id in job_ids]}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("  Q1   Revenue  ", "Q1 Revenue"),
+        ("Sales · Mix (EU)", "Sales · Mix (EU)"),
+    ],
+)
+def test_model_names_are_trimmed_and_collapsed(raw, expected):
+    assert normalize_model_name(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "x" * 81, "bad/name", "semi;colon"])
+def test_invalid_model_names_are_rejected(raw):
+    with pytest.raises(InvalidModelName):
+        normalize_model_name(raw)
+
+
+def test_names_are_unique_case_insensitively_and_suggestions_avoid_taken_names(settings, raw_db):
+    _seed_sync(raw_db)
+
+    async def body(db):
+        registry = ModelRegistry(db)
+        assert await registry.name_taken(org_id=ORG_A, user_id=USER_1, name="mmm · SALES")
+        assert not await registry.name_taken(org_id=ORG_A, user_id=USER_1, name="Brand new")
+        suggestions = await registry.suggest_names(org_id=ORG_A, user_id=USER_1, base="MMM · sales")
+        assert len(suggestions) == 3 and len(set(suggestions)) == 3
+        assert all(name.startswith("MMM · sales-") for name in suggestions)
+        for name in suggestions:
+            assert not await registry.name_taken(org_id=ORG_A, user_id=USER_1, name=name)
+
+    run_with_db(settings, body)
+
+
+def test_purge_removes_archived_versions_once_due(settings, raw_db):
+    _seed_sync(raw_db)
+
+    async def body(db):
+        registry = ModelRegistry(db)
+        await registry.archive_versions(
+            org_id=ORG_A, user_id=USER_1, model_id="m1", versions=[1], actor_email="a@b.c"
+        )
+        assert await registry.due_purge() == []
+        await db.model_versions.update_one({"model_id": "m1"}, {"$set": {"purge_at": datetime.now(UTC) - timedelta(seconds=1)}})
+        assert await ModelLifecycle(registry=registry, training=FakeTraining(), deployments=None).purge_due() == 1
+        assert await db.models.count_documents({"id": "m1"}) == 0
+        assert await db.model_versions.count_documents({"model_id": "m1"}) == 0
+
+    run_with_db(settings, body)
+
+
+def test_start_mmm_run_reports_a_taken_name_with_suggestions():
+    class TakenService(RecordingService):
+        async def submit_mmm_plan(self, **kwargs):
+            raise ModelNameTaken("Revenue Q1", ["Revenue Q1-a1b2c3"])
+
+    result = run_tool(StartMmmRunTool(), tool_args(), TakenService())
+    assert "already exists" in result
+    assert "Revenue Q1-a1b2c3" in result
+
+
+def test_delete_model_removes_it_when_nothing_is_deployed(api, raw_db):
+    _seed_sync(raw_db)
+    res = api.delete("/api/v1/models/m1", headers=HEADERS)
+    assert res.status_code == 200
+    assert res.json()["outcome"] == "deleted"
+    assert api.get("/api/v1/models", headers=HEADERS).json() == []
+    assert api.get("/api/v1/models/m1", headers=HEADERS).status_code == 404
+
+
+def test_deployed_version_needs_confirmation_then_deallocates_and_archives(api, raw_db):
+    _seed_sync(raw_db)
+    dep_id = api.post("/api/v1/models/m1/versions/1/deployments", headers=HEADERS).json()["id"]
+    _wait_for_status(api, dep_id, "running")
+
+    blocked = api.delete("/api/v1/models/m1/versions/1", headers=HEADERS)
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "needs_confirmation"
+    assert blocked.json()["detail"]["deployments"][0]["id"] == dep_id
+
+    archived = api.delete("/api/v1/models/m1/versions/1", params={"deallocate": True}, headers=HEADERS)
+    assert archived.status_code == 200
+    assert archived.json()["outcome"] == "archived"
+    assert api.get(f"/api/v1/deployments/{dep_id}", headers=HEADERS).json()["status"] == "stopped"
+    assert api.get("/api/v1/models", headers=HEADERS).json() == []
+    assert raw_db.model_versions.find_one({"model_id": "m1"})["purge_at"] is not None
+
+
+def test_version_whose_training_job_is_missing_is_still_deleted(api, raw_db):
+    _seed_sync(raw_db)
+    res = api.delete("/api/v1/models/m1/versions/1", headers=HEADERS)
+    assert res.status_code == 200
+    assert res.json()["outcome"] == "deleted"
+    assert api.get("/api/v1/models/m1", headers=HEADERS).status_code == 404
+
+
+def test_deleting_unknown_model_or_version_is_not_found(api, raw_db):
+    _seed_sync(raw_db)
+    assert api.delete("/api/v1/models/missing", headers=HEADERS).status_code == 404
+    assert api.delete("/api/v1/models/m1/versions/9", headers=HEADERS).status_code == 404

@@ -73,9 +73,10 @@ def test_plan_accepts_empty_controls_only_with_a_reason():
 
 def test_approval_text_shows_controls_or_why_none():
     tool = StartMmmRunTool()
-    with_controls = tool.approval_text({"kpi": "revenue", "channels": ["tv"], "controls": ["google_promotion", "meta_promotion"], "date_start": "2024-01-01", "date_end": "2024-12-31"})
+    with_controls = tool.approval_text({"model_name": "Q1 Revenue", "kpi": "revenue", "channels": ["tv"], "controls": ["google_promotion", "meta_promotion"], "date_start": "2024-01-01", "date_end": "2024-12-31"})
     assert "controls google_promotion, meta_promotion" in with_controls
-    without = tool.approval_text({"kpi": "revenue", "channels": ["tv"], "controls": [], "controls_reason": "No promo data", "date_start": "2024-01-01", "date_end": "2024-12-31"})
+    assert "Start MMM model 'Q1 Revenue'" in with_controls
+    without = tool.approval_text({"model_name": "Q1 Revenue", "kpi": "revenue", "channels": ["tv"], "controls": [], "controls_reason": "No promo data", "date_start": "2024-01-01", "date_end": "2024-12-31"})
     assert "controls none (No promo data)" in without
 
 
@@ -83,6 +84,7 @@ def test_approval_text_shows_the_country_scope_for_every_source():
     tool = StartMmmRunTool()
     scoped_text = tool.approval_text(
         {
+            "model_name": "Scope check",
             "kpi": "revenue",
             "channels": ["tv"],
             "controls": ["price"],
@@ -389,7 +391,7 @@ class RecordingService:
     def __init__(self):
         self.plans: list[MMMPlan] = []
 
-    async def submit_mmm_plan(self, *, org_id, user_id, chat_id, plan):
+    async def submit_mmm_plan(self, *, org_id, user_id, chat_id, plan, model_name=None):
         self.plans.append(plan)
         return "job-123"
 
@@ -404,6 +406,7 @@ def run_tool(tool, args: dict, service) -> str:
 
 def tool_args(**changes) -> dict:
     args = {
+        "model_name": "Revenue Q1",
         "kpi": "revenue",
         "channels": ["tv", "search"],
         "controls": ["price"],

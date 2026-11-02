@@ -97,3 +97,60 @@ async def retrain_version(
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.errors(include_url=False)) from exc
     return RetrainResult(job_id=job_id)
+
+
+def _delete_outcome(result: dict[str, Any]) -> dict[str, Any]:
+    outcome = result["outcome"]
+    if outcome == "needs_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "needs_confirmation", "deployments": result["deployments"]},
+        )
+    if outcome == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "blocked", "reason": result["reason"], "deleted": result.get("deleted", [])},
+        )
+    return result
+
+
+@router.delete("/models/{model_id}")
+async def delete_model(
+    model_id: str,
+    request: Request,
+    deallocate: bool = False,
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    try:
+        result = await request.app.state.model_lifecycle.delete_model(
+            org_id=principal.org_id,
+            user_id=principal.user_id,
+            model_id=model_id,
+            actor_email=principal.email,
+            deallocate=deallocate,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _delete_outcome(result)
+
+
+@router.delete("/models/{model_id}/versions/{version}")
+async def delete_version(
+    model_id: str,
+    version: int,
+    request: Request,
+    deallocate: bool = False,
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    try:
+        result = await request.app.state.model_lifecycle.delete_versions(
+            org_id=principal.org_id,
+            user_id=principal.user_id,
+            model_id=model_id,
+            version_numbers=[version],
+            actor_email=principal.email,
+            deallocate=deallocate,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _delete_outcome(result)

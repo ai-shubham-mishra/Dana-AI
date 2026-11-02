@@ -164,3 +164,10 @@ export type Deployment = {
 };
 
 export type RetrainResult = { job_id: string };
+
+export type DeleteModelResult = {
+  outcome: "deleted" | "archived" | "blocked" | string;
+  versions?: number[];
+  deleted?: number[];
+  deallocated?: unknown[];
+};
