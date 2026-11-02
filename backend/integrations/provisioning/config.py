@@ -19,6 +19,8 @@ class ProvisioningConfig:
     training_root: Path = BACKEND_ROOT.parent / "var" / "training"
     image_repo: str = "dana-mmm-api"
     container_port: int = 5001
+    port_range_start: int = 8100
+    port_range_end: int = 8199
     health_timeout_s: float = 900.0
     health_interval_s: float = 3.0
     arm_base_url: str = "http://localhost:8080"
@@ -40,7 +42,7 @@ class ProvisioningConfig:
             raw = env[key]
             if item.name in {"workdir", "training_root"}:
                 overrides[item.name] = Path(raw)
-            elif item.name in {"container_port"}:
+            elif item.name in {"container_port", "port_range_start", "port_range_end"}:
                 overrides[item.name] = int(raw)
             elif item.name in {"health_timeout_s", "health_interval_s"}:
                 overrides[item.name] = float(raw)

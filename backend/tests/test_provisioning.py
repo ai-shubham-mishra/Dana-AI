@@ -273,25 +273,33 @@ class _Builder:
     def __init__(self, rec):
         self.rec = rec
 
-    def build(self, context_dir, dockerfile, tag):
+    def build(self, context_dir, dockerfile, tag, log=None):
         self.rec.record("build")
         assert dockerfile == "Dockerfile.api"
         assert (context_dir / "model" / "current_workspace_model.nc").is_file()
+        if log:
+            log("built")
         return BuiltImage(tag)
 
 
 class _Runtime:
     def __init__(self, rec):
         self.rec = rec
+        self.runs = []
+        self.removed = []
 
-    def run(self, image, name, env, container_port):
+    def run(self, image, name, env, container_port, host_port=None):
         self.rec.record("run")
         assert env == {"MMM_MODEL_SOURCE": "local"}
-        return RunningContainer(name, image.tag, 9999, "http://127.0.0.1:9999")
+        self.runs.append((name, host_port))
+        return RunningContainer(name, image.tag, host_port or 9999, f"http://127.0.0.1:{host_port or 9999}")
 
-    def wait_healthy(self, container, timeout_s, interval_s):
+    def wait_healthy(self, container, timeout_s, interval_s, log=None):
         self.rec.record("health")
         return {"status": "loaded", "model_loaded": True}
+
+    def remove(self, name):
+        self.removed.append(name)
 
 
 class _Cloud:
@@ -336,3 +344,25 @@ def test_orchestrator_no_cloud_skips_arm(tmp_path):
     assert "cloud" not in rec.steps
     assert result.app is None
     assert result.warnings == []
+
+
+def test_orchestrator_instance_id_host_port_and_log(tmp_path):
+    rec = _Recorder()
+    orch = _orchestrator(tmp_path, rec, _Cloud(rec))
+    lines: list[str] = []
+    result = orch.provision(
+        "Run_1", deploy_cloud=False, instance_id="dep-abc", host_port=8123, log=lines.append
+    )
+    assert result.image.tag == "dana-mmm-api:dep-abc"
+    assert result.container.name == "dana-mmm-dep-abc"
+    assert result.container.base_url == "http://127.0.0.1:8123"
+    assert orch.runtime.runs == [("dana-mmm-dep-abc", 8123)]
+    assert lines[0].startswith("Resolving model run Run_1")
+    assert "Starting the container" in lines
+
+
+def test_orchestrator_deprovision_removes_container(tmp_path):
+    rec = _Recorder()
+    orch = _orchestrator(tmp_path, rec, _Cloud(rec))
+    orch.deprovision("dep-abc")
+    assert orch.runtime.removed == ["dana-mmm-dep-abc"]

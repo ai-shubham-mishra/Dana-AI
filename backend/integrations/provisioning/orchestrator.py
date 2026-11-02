@@ -14,7 +14,14 @@ from integrations.provisioning.docker_runtime import DockerCli
 from integrations.provisioning.git_source import GitSourceCloner
 from integrations.provisioning.model_source import LocalTrainingModelSource
 from integrations.provisioning.models import ProvisionResult
-from integrations.provisioning.ports import CloudProvisioner, ContainerRuntime, ImageBuilder, ModelSource, SourceCloner
+from integrations.provisioning.ports import (
+    CloudProvisioner,
+    ContainerRuntime,
+    ImageBuilder,
+    LogSink,
+    ModelSource,
+    SourceCloner,
+)
 
 DOCKERFILE = "Dockerfile.api"
 LOCAL_ENV = {"MMM_MODEL_SOURCE": "local"}
@@ -45,16 +52,38 @@ class ProvisioningOrchestrator:
         self.runtime = runtime
         self.cloud = cloud
 
-    def provision(self, run_id: str, deploy_cloud: bool = True) -> ProvisionResult:
-        slug = _slug(run_id)
+    def provision(
+        self,
+        run_id: str,
+        deploy_cloud: bool = True,
+        *,
+        instance_id: str | None = None,
+        host_port: int | None = None,
+        log: LogSink | None = None,
+    ) -> ProvisionResult:
+        instance = _slug(instance_id or run_id)
+        if log:
+            log(f"Resolving model run {run_id}")
         model = self.model_source.resolve(run_id)
+        if log:
+            log("Cloning the MMM library")
         checkout = self.cloner.checkout()
+        if log:
+            log(f"Library at {checkout.sha[:12]}; preparing build context")
         context_dir = prepare_build_context(
-            checkout.library_dir, model, self.config.workdir / "builds" / slug / "context"
+            checkout.library_dir, model, self.config.workdir / "builds" / instance / "context"
         )
-        image = self.builder.build(context_dir, DOCKERFILE, f"{self.config.image_repo}:{slug}")
-        container = self.runtime.run(image, f"dana-mmm-{slug}", LOCAL_ENV, self.config.container_port)
-        health = self.runtime.wait_healthy(container, self.config.health_timeout_s, self.config.health_interval_s)
+        if log:
+            log("Building the container image")
+        image = self.builder.build(context_dir, DOCKERFILE, f"{self.config.image_repo}:{instance}", log=log)
+        if log:
+            log("Starting the container")
+        container = self.runtime.run(
+            image, self.container_name(instance), LOCAL_ENV, self.config.container_port, host_port=host_port
+        )
+        health = self.runtime.wait_healthy(
+            container, self.config.health_timeout_s, self.config.health_interval_s, log=log
+        )
 
         app = None
         warnings: list[str] = []
@@ -70,6 +99,14 @@ class ProvisioningOrchestrator:
             app=app,
             warnings=warnings,
         )
+
+    @staticmethod
+    def container_name(instance_id: str) -> str:
+        return f"dana-mmm-{_slug(instance_id)}"
+
+    def deprovision(self, instance_id: str) -> None:
+        self.runtime.remove(self.container_name(instance_id))
+
 
 
 def build_default_orchestrator(config: ProvisioningConfig) -> ProvisioningOrchestrator:
