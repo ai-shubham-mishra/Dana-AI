@@ -36,6 +36,15 @@ export function normalizeModelName(name: string) {
   return name.trim().toLowerCase();
 }
 
+// Dynamic route segments can arrive still percent-encoded, so decode them before matching names.
+export function decodeRouteParam(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 // Duplicate names (legacy data) carry the model id so the URL stays unambiguous.
 export function modelHref(model: ModelSummary, duplicateName: boolean) {
   const base = `/models/${encodeURIComponent(model.name)}`;
