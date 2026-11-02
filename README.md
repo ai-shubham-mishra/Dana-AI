@@ -13,6 +13,7 @@ Frontend styling follows the analytics-studio branding.
 | 2 | Read-only Key Vault config, Claude via Foundry, deepagents chat with SSE streaming, todos, tool-call events, Mongo persistence | Done ([#9](https://github.com/ai-shubham-mishra/Dana-AI/issues/9)) |
 | 3 (first slice) | HITL approvals (`ask_user`, approve/edit/reject) and durable Mongo-backed checkpoints | Done ([#15](https://github.com/ai-shubham-mishra/Dana-AI/issues/15)) |
 | 4 | Local MMM training on the bundled sample dataset: approval-gated job, subprocess trainer, live progress on the Jobs tab, model artifact in Azurite | In progress ([#31](https://github.com/ai-shubham-mishra/Dana-AI/issues/31)) |
+| 5 | Model versions (retrain from a saved config), local Docker containers per version on unique ports with health probes and live logs, Models tab | In progress ([#125](https://github.com/ai-shubham-mishra/Dana-AI/issues/125)) |
 
 ## Architecture
 
@@ -87,6 +88,8 @@ Copy `backend/.env.example` to `backend/.env`. Never commit `.env` files. Values
 | `AZURE_KEYVAULT_URL` | Key Vault URL |
 | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | Bootstrap credentials for the read-only service principal |
 | `LLM_MODEL` | Claude deployment name (default `claude-sonnet-5-5`) |
+| `PROVISIONING_PORT_RANGE_START`, `PROVISIONING_PORT_RANGE_END` | Host ports handed to model containers, one per running container (default `8100`–`8199`) |
+| `PROVISIONING_REPO_URL`, `PROVISIONING_REPO_BRANCH` | MMM library repo and branch to clone for the container image (default `staging`) |
 
 ### Key Vault access
 
@@ -129,6 +132,17 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - `GET /api/v1/jobs` lists your jobs. `GET /api/v1/jobs/{id}` returns parameters, metrics, the artifact, and the event timeline. Other tenants get 404.
 - The Jobs tab shows a progress bar for each job. Click a row to open its details.
 - A full default run (4 chains, 2000 tuning steps) is slow. The tests use small budgets. To run the trainer by hand: `cd backend && PYTHONPATH=. ./.venv/bin/python -m integrations.training.mmm.cli --data resources/training/mmm/mmm_demo.csv --config resources/training/mmm/mmm_demo.yaml --output-dir ~/.dana-ai/training/manual --chains 2 --tune 200 --draws 200`.
+
+## Model versions and containers
+
+- Each finished training job is saved as a version of its model. Versions are stored in `model_versions`, and changes are recorded in `model_events` (who did what, and when).
+- `GET /api/v1/models` lists models. `GET /api/v1/models/{id}` returns the versions and the event history.
+- `POST /api/v1/models/{id}/versions/{v}/retrain` queues a new training job with the configuration saved on that version. The Models tab shows that configuration in a confirmation dialog first. The agent's `retrain_model_version` tool needs approval (HITL) before it queues the job.
+- `POST /api/v1/models/{id}/versions/{v}/deployments` allocates a local container for that version. It returns 202 while the container starts, then the container is `running` and its health probe reports `live`. It returns 503 when no host port is free.
+- Each container gets its own host port from the provisioning range. The port is leased in Mongo, so two containers cannot share one.
+- `GET /api/v1/deployments` lists containers. `POST /api/v1/deployments/{id}/deallocate` stops and removes a container and releases its port. It returns 409 while the container is still provisioning.
+- `GET /api/v1/deployments/{id}/logs` streams the container's log lines as SSE and ends with an `end` event.
+- The Models tab lists models with live container counts. For a model, it shows versions (with Retrain and Allocate actions), the saved configuration, containers with health and Deallocate, a live log terminal, and history.
 
 ## Git workflow
 

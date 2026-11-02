@@ -106,3 +106,61 @@ export type JobDetail = JobSummary & {
   artifacts: JobArtifact[];
   events: JobEvent[];
 };
+
+export type ModelSummary = {
+  id: string;
+  name: string;
+  latest_version: number;
+  version_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ModelVersion = {
+  model_id: string;
+  version: number;
+  job_id: string;
+  source: string;
+  source_version: number | null;
+  kpi: string | null;
+  params: Record<string, unknown> | null;
+  metrics: Record<string, unknown> | null;
+  created_by_email: string | null;
+  created_at: string;
+};
+
+export type ModelEvent = {
+  action: string;
+  version: number | null;
+  actor_email: string | null;
+  detail: string | null;
+  created_at: string;
+};
+
+export type ModelDetail = ModelSummary & {
+  versions: ModelVersion[];
+  events: ModelEvent[];
+};
+
+export type DeploymentStatus = "provisioning" | "running" | "stopped" | "failed" | string;
+
+export type DeploymentHealthState = "live" | "unhealthy" | "unreachable" | DeploymentStatus;
+
+export type Deployment = {
+  id: string;
+  model_id: string;
+  version: number;
+  job_id: string;
+  status: DeploymentStatus;
+  host_port: number;
+  url: string;
+  container: string;
+  message: string | null;
+  error: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+  health: { state: DeploymentHealthState; detail: string | null };
+};
+
+export type RetrainResult = { job_id: string };
