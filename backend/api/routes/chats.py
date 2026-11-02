@@ -314,6 +314,7 @@ def _stream_response(
         user_id=scope["user_id"],
         chat_id=chat_id,
         actor_email=actor_email,
+        plans=request.app.state.plans,
     )
 
     async def events() -> AsyncIterator[str]:

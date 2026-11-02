@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import {
+  BookMarked,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -171,6 +172,7 @@ export function Sidebar({ onSignIn }: { onSignIn: () => void }) {
         <NavLink href="/connectors" label="Connectors" icon={Database} active={pathname.startsWith("/connectors")} collapsed={collapsed} />
         <NavLink href="/jobs" label="Jobs" icon={LayoutDashboard} active={pathname.startsWith("/jobs")} collapsed={collapsed} />
         <NavLink href="/models" label="Models" icon={Boxes} active={pathname.startsWith("/models")} collapsed={collapsed} />
+        <NavLink href="/plans" label="Plans" icon={BookMarked} active={pathname.startsWith("/plans")} collapsed={collapsed} />
 
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1">

@@ -24,6 +24,9 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("org_id", ASCENDING), ("user_id", ASCENDING), ("job_id", ASCENDING)], unique=True
     )
     await db.model_events.create_index([("model_id", ASCENDING), ("created_at", ASCENDING)])
+    await db.plans.create_index([("id", ASCENDING)], unique=True)
+    await db.plans.create_index([("org_id", ASCENDING), ("owner_id", ASCENDING), ("updated_at", DESCENDING)])
+    await db.plans.create_index([("org_id", ASCENDING), ("visibility", ASCENDING)])
     await db.deployments.create_index([("id", ASCENDING)], unique=True)
     await db.deployments.create_index(
         [("org_id", ASCENDING), ("user_id", ASCENDING), ("model_id", ASCENDING)]

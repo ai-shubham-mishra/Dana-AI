@@ -9,7 +9,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from agent.runtime import build_default_agent
-from api.routes import chats, connectors, deployments, health, jobs, me, models
+from api.routes import chats, connectors, deployments, health, jobs, me, models, plans
 from config.settings import Settings, get_settings
 from integrations.auth.jwt_secret import load_jwt_secret
 from integrations.checkpoint.mongo import create_mongo_checkpointer
@@ -18,6 +18,7 @@ from integrations.deployments.service import DeploymentService
 from integrations.model_registry.lifecycle import ModelLifecycle, run_purge_loop
 from integrations.model_registry.registry import ModelRegistry
 from integrations.mongo.client import create_mongo_client, ensure_indexes
+from integrations.plans.store import PlanStore
 from integrations.postgres.client import create_readonly_pool
 from integrations.provisioning.config import ProvisioningConfig
 from integrations.provisioning.orchestrator import ProvisioningOrchestrator, build_default_orchestrator
@@ -73,6 +74,7 @@ def create_app(
         app.state.active_chats = set()
         registry = ModelRegistry(db)
         app.state.model_registry = registry
+        app.state.plans = PlanStore(db)
         app.state.training = TrainingService(
             db=db,
             blob=blob,
@@ -133,6 +135,7 @@ def create_app(
     app.include_router(chats.router)
     app.include_router(jobs.router)
     app.include_router(models.router)
+    app.include_router(plans.router)
     app.include_router(deployments.router)
     app.include_router(connectors.router)
     return app

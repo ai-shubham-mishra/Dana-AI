@@ -188,3 +188,33 @@ export type DeleteModelResult = {
   deleted?: number[];
   deallocated?: unknown[];
 };
+
+export type PlanVisibility = "private" | "org";
+
+export type PlanSpec = Record<string, unknown>;
+
+export type Plan = {
+  id: string;
+  name: string;
+  description: string;
+  visibility: PlanVisibility;
+  spec: PlanSpec;
+  owner_id: string;
+  owner_email: string | null;
+  is_owner: boolean;
+};
+
+export type PlanInput = {
+  name: string;
+  description: string;
+  visibility: PlanVisibility;
+  spec: PlanSpec;
+};
+
+export type PlanRunResult = { job_id: string };
+
+export type PlanNameConflict = {
+  code: "name_taken";
+  name: string;
+  suggestions: string[];
+};
