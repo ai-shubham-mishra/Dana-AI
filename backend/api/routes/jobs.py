@@ -81,7 +81,7 @@ async def delete_jobs(
 ) -> DeleteJobsResult:
     job_ids = list(dict.fromkeys(body.job_ids))
     result = await request.app.state.training.delete_jobs(
-        org_id=principal.org_id, user_id=principal.user_id, job_ids=job_ids
+        org_id=principal.org_id, user_id=principal.user_id, job_ids=job_ids, actor_email=principal.email
     )
     return DeleteJobsResult(**result)
 

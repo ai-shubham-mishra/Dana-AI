@@ -55,7 +55,7 @@ If the user wants the model for one country or market, every source must be filt
 
 ## 4. Date window
 
-- Resolve the window with `get_current_date` and `resolve_date_range`.
+- Use the window the user chose in the training-window question (see mmm-planning). Convert "last N" phrases with `get_current_date` and `resolve_date_range`.
 - Prefer at least 2 years of weekly data (about 100 rows) or 1 year of daily data. Fewer than 20 rows is rejected by the trainer.
 - Avoid windows that cut a campaign or a major event in half unless you state it.
 

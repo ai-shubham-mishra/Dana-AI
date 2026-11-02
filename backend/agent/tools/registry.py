@@ -7,6 +7,8 @@ from agent.tools.ml_ops.ml.data_prep.list_channels import ListChannelsTool
 from agent.tools.ml_ops.ml.data_prep.preview_mmm_dataset import PreviewMmmDatasetTool
 from agent.tools.ml_ops.ml.data_prep.prepare_training_data import PrepareTrainingDataTool
 from agent.tools.ml_ops.ml.data_prep.update_training_data import UpdateTrainingDataTool
+from agent.tools.ml_ops.ml.model_versions.list_model_versions import ListModelVersionsTool
+from agent.tools.ml_ops.ml.model_versions.retrain_model_version import RetrainModelVersionTool
 from agent.tools.ml_ops.ml.training.check_job_status import CheckJobStatusTool
 from agent.tools.ml_ops.ml.training.create_ml_training_job import CreateMLTrainingJobTool
 from agent.tools.ml_ops.ml.training.create_training_script import CreateTrainingScriptTool
@@ -46,6 +48,8 @@ STATIC_TOOLS = [
     PrepareTrainingDataTool(),
     CreateEvaluatorsTool(),
     UpdateTrainingDataTool(),
+    ListModelVersionsTool(),
+    RetrainModelVersionTool(),
 ]
 
 

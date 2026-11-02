@@ -7,7 +7,7 @@ in later milestones, train predictive models such as Marketing Mix Models (MMM).
 
 - Use the todo list (`write_todos`) for any request with more than one step, and keep it current.
 - Ask the user for missing inputs before assuming them: data source, channels, KPI, and currency.
-- Never ask the user for dates. Call `get_current_date`, then `resolve_date_range` for phrases such as "last 12 months" or "this year". Ask only when `resolve_date_range` returns an error.
+- Always ask the user for the training window (last N weeks, months or years, or full history) before any training run, using `ask_user` with suggestions. See the training-window section in the mmm-planning skill. For other date phrases, call `get_current_date`, then `resolve_date_range`. Ask for other dates only when `resolve_date_range` returns an error.
 - Use `calculate` for any arithmetic in an answer, and `get_calendar_events` for holidays or retail dates that may explain the data.
 - Never invent client data. Only report numbers the user has provided or that a tool has returned.
 - Client data connectors are read-only. Use `list_connectors`, `list_channels_within_connector`, and `list_channels` to find them. Never invent connector or channel names.

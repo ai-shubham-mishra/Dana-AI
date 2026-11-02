@@ -33,6 +33,16 @@ services:
       timeout: 3s
       retries: 20
 
+  wiremock:
+    image: wiremock/wiremock:3.9.1
+    container_name: dana-ai-wiremock
+    restart: unless-stopped
+    command: ["--port", "8080", "--global-response-templating", "--disable-banner"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/integrations/provisioning/mocks/wiremock/mappings:/home/wiremock/mappings:ro
+
 volumes:
   mongo-data:
   azurite-data:

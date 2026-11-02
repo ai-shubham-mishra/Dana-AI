@@ -2,9 +2,23 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiPostJson, ApiError } from "./api";
+import { apiGet, apiPost, apiPostJson, ApiError } from "./api";
 import { useAccessToken } from "./auth";
-import type { ChatMessage, ChatSummary, ConnectorPage, ConnectorSummary, DeleteJobsResult, JobDetail, JobSummary, Me, PendingApproval } from "./types";
+import type {
+  ChatMessage,
+  ChatSummary,
+  ConnectorPage,
+  ConnectorSummary,
+  DeleteJobsResult,
+  Deployment,
+  JobDetail,
+  JobSummary,
+  Me,
+  ModelDetail,
+  ModelSummary,
+  PendingApproval,
+  RetrainResult,
+} from "./types";
 
 const POLL_INTERVAL_MS = 5000;
 const CHATS_REFRESH_MS = 10_000;
@@ -99,5 +113,70 @@ export function useMessages(chatId: string | null) {
     enabled: Boolean(token && chatId),
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
+
+const DEPLOYMENT_POLL_MS = 5000;
+const DEPLOYMENT_IDLE_POLL_MS = 15_000;
+
+export const useModels = () => useApiQuery<ModelSummary[]>("models", "/api/v1/models");
+
+export function useModel(modelId: string | null) {
+  const token = useAccessToken();
+  return useQuery<ModelDetail, ApiError>({
+    queryKey: ["model", token, modelId],
+    queryFn: () => apiGet<ModelDetail>(`/api/v1/models/${encodeURIComponent(modelId ?? "")}`, token),
+    enabled: Boolean(token && modelId),
+    placeholderData: (previous) => previous,
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
+
+export function useDeployments() {
+  const token = useAccessToken();
+  return useQuery<Deployment[], ApiError>({
+    queryKey: ["deployments", token],
+    queryFn: () => apiGet<Deployment[]>("/api/v1/deployments", token),
+    enabled: Boolean(token),
+    refetchInterval: (query) => {
+      const deployments = query.state.data;
+      return deployments?.some((deployment) => deployment.status === "provisioning") ? DEPLOYMENT_POLL_MS : DEPLOYMENT_IDLE_POLL_MS;
+    },
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
+
+export function useAllocateDeployment() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return useMutation<Deployment, ApiError, { modelId: string; version: number }>({
+    mutationFn: ({ modelId, version }) =>
+      apiPost<Deployment>(`/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/deployments`, token ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["deployments", token] });
+    },
+  });
+}
+
+export function useDeallocateDeployment() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return useMutation<Deployment, ApiError, string>({
+    mutationFn: (depId) => apiPost<Deployment>(`/api/v1/deployments/${depId}/deallocate`, token ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["deployments", token] });
+    },
+  });
+}
+
+export function useRetrainVersion() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return useMutation<RetrainResult, ApiError, { modelId: string; version: number }>({
+    mutationFn: ({ modelId, version }) =>
+      apiPost<RetrainResult>(`/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/retrain`, token ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["jobs", token] });
+    },
   });
 }
