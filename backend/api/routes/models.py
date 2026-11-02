@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ValidationError
 from integrations.auth.dependencies import Principal, get_principal
+from integrations.model_registry.registry import InvalidTag
 from integrations.training.mmm.plan import PlanError
 
 router = APIRouter(prefix="/api/v1")
@@ -28,6 +29,7 @@ class ModelVersion(BaseModel):
     params: dict[str, Any] | None = None
     metrics: dict[str, Any] | None = None
     created_by_email: str | None = None
+    tags: list[str] = []
     created_at: datetime
 
 
@@ -154,3 +156,27 @@ async def delete_version(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _delete_outcome(result)
+
+
+@router.put("/models/{model_id}/versions/{version}/tags/{tag}", response_model=ModelDetail)
+async def set_version_tag(
+    model_id: str,
+    version: int,
+    tag: str,
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> ModelDetail:
+    try:
+        await request.app.state.model_registry.set_tag(
+            org_id=principal.org_id,
+            user_id=principal.user_id,
+            model_id=model_id,
+            version=version,
+            tag=tag,
+            actor_email=principal.email,
+        )
+    except InvalidTag as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await get_model(model_id, request, principal)

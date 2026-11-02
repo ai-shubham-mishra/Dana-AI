@@ -12,8 +12,13 @@ START_MMM_RUN_TOOL = "start_mmm_run"
 
 
 class StartMmmRunInput(ToolInput):
+    model_id: str | None = Field(
+        default=None,
+        description="Set only to retrain an existing model with these settings. Pass its model_id from list_models or list_model_versions so a new version is added to it. Leave empty for a brand-new model.",
+    )
     model_name: str = Field(
-        description="Unique name for the new model, asked from the user first. Must not match an existing model name. Max 80 characters."
+        default="",
+        description="Required for a brand-new model, asked from the user first. Must not match an existing model name. Max 80 characters. Leave empty when model_id is set.",
     )
     kpi: str = Field(description="Output name of the KPI to predict. Must be one of the mapped metric outputs.")
     channels: list[str] = Field(description="Output names of the marketing channels to model, all from the mapped metrics.")
@@ -76,7 +81,8 @@ class StartMmmRunTool(BaseTool):
     description: str = (
         "Start an MMM training run on the org's connector data. The dataset, config and training script are "
         "generated for this run. A human must approve, edit, or reject the plan before this runs. Only call this after "
-        "the user answered the training-window question."
+        "the user answered the training-window question. To retrain an existing model with new settings, pass its "
+        "model_id so the run adds a new version to that model instead of creating a new model."
     )
     allowed_decisions = ["approve", "edit", "reject"]
     approval_summary = "Start MMM model '{model_name}' for KPI {kpi} on channels {channels} with controls {controls}, scope {scope}, from {date_start} to {date_end}, preparation {preparation}?"
@@ -86,6 +92,8 @@ class StartMmmRunTool(BaseTool):
 
     def approval_text(self, args: dict[str, Any]) -> str:
         values = dict(args)
+        if values.get("model_id"):
+            values["model_name"] = f"retrain of existing model {values['model_id']}"
         if not values.get("controls"):
             values["controls"] = f"none ({values.get('controls_reason') or 'no reason given'})"
         values["scope"] = _scope_text(values.get("sources"))
@@ -96,7 +104,13 @@ class StartMmmRunTool(BaseTool):
         scope = current_scope()
         if scope is None:
             return ToolOutput(success=False, error="Training is unavailable in this context, so no run was started.")
+        model_id = kwargs.pop("model_id", None) or None
         model_name = kwargs.pop("model_name", None)
+        if model_id is None and not model_name:
+            return ToolOutput(
+                success=False,
+                error="A brand-new model needs a model_name. Ask the user for one, or pass model_id to retrain an existing model.",
+            )
         try:
             plan = MMMPlan(**kwargs)
             job_id = await scope.service.submit_mmm_plan(
@@ -104,8 +118,13 @@ class StartMmmRunTool(BaseTool):
                 user_id=scope.user_id,
                 chat_id=scope.chat_id,
                 plan=plan,
-                model_name=model_name,
+                model_id=model_id,
+                model_name=None if model_id else model_name,
+                source="retrain" if model_id else "train",
+                actor_email=scope.actor_email,
             )
+        except LookupError as exc:
+            return ToolOutput(success=False, error=f"{exc}. Call list_models to find the correct model_id.")
         except ModelNameTaken as exc:
             suggestions = ", ".join(exc.suggestions) or "none available"
             return ToolOutput(

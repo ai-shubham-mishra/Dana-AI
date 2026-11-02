@@ -210,7 +210,9 @@ async def send_message(
         active.discard(chat_id)
         raise
 
-    return _stream_response(request, scope, agent, content=body.content, timezone=_client_timezone(request))
+    return _stream_response(
+        request, scope, agent, actor_email=principal.email, content=body.content, timezone=_client_timezone(request)
+    )
 
 
 @router.get("/chats/{chat_id}/pending", response_model=PendingApproval | None)
@@ -247,7 +249,9 @@ async def resume_chat(
         raise
 
     scope = {"org_id": principal.org_id, "user_id": principal.user_id, "chat_id": chat_id}
-    return _stream_response(request, scope, agent, decisions=decisions, timezone=_client_timezone(request))
+    return _stream_response(
+        request, scope, agent, actor_email=principal.email, decisions=decisions, timezone=_client_timezone(request)
+    )
 
 
 def _check_decisions(pending: dict, decisions: list[DecisionIn]) -> list[dict]:
@@ -297,6 +301,8 @@ def _stream_response(
     request: Request,
     scope: dict[str, str],
     agent: Any,
+    *,
+    actor_email: str | None,
     **turn: Any,
 ) -> StreamingResponse:
     db = request.app.state.db
@@ -307,6 +313,7 @@ def _stream_response(
         org_id=scope["org_id"],
         user_id=scope["user_id"],
         chat_id=chat_id,
+        actor_email=actor_email,
     )
 
     async def events() -> AsyncIterator[str]:

@@ -107,7 +107,11 @@ class DockerCli:
         raise DockerError(f"{container.name} not healthy after {timeout_s:.0f}s: {last}")
 
     def remove(self, name: str) -> None:
-        self._docker("rm", "-f", name, check=False)
+        try:
+            self._docker("rm", "-f", name)
+        except DockerError as exc:
+            if "No such container" not in str(exc):
+                raise
 
     def follow_logs(self, name: str, sink: LogSink) -> LogFollower:
         process = subprocess.Popen(

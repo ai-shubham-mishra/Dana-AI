@@ -165,15 +165,15 @@ def test_delete_removes_job_events_artifact_and_run_folder(raw_db, member, tmp_p
 
 def test_delete_skips_running_missing_and_other_users_jobs(raw_db, member, tmp_path):
     now = time.time()
-    raw_db.jobs.insert_many(
-        [
-            {"id": "running-job", "title": "Running", "kind": "mmm_training", "status": "running",
-             "org_id": ORG_A, "user_id": USER_1, "created_at": _dt(now), "updated_at": _dt(now)},
-            {"id": "other-job", "title": "Other", "kind": "mmm_training", "status": "succeeded",
-             "org_id": ORG_A, "user_id": USER_2, "created_at": _dt(now), "updated_at": _dt(now)},
-        ]
-    )
     with make_client("ok", tmp_path) as client:
+        raw_db.jobs.insert_many(
+            [
+                {"id": "running-job", "title": "Running", "kind": "mmm_training", "status": "running",
+                 "org_id": ORG_A, "user_id": USER_1, "created_at": _dt(now), "updated_at": _dt(now)},
+                {"id": "other-job", "title": "Other", "kind": "mmm_training", "status": "succeeded",
+                 "org_id": ORG_A, "user_id": USER_2, "created_at": _dt(now), "updated_at": _dt(now)},
+            ]
+        )
         response = client.post(
             "/api/v1/jobs/delete", json={"job_ids": ["running-job", "other-job", "missing"]}, headers=HEADERS
         )

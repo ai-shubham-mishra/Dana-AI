@@ -1,6 +1,7 @@
 import json
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
+from math import ceil
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.deployments.leases import NoPortAvailable
-from integrations.deployments.service import DeploymentBusy
+from integrations.deployments.service import DeploymentBusy, DeprovisionFailed, VersionAlreadyDeployed
 
 router = APIRouter(prefix="/api/v1")
 
@@ -19,12 +20,28 @@ class DeploymentHealth(BaseModel):
     detail: str | None = None
 
 
+class ArchivedDeployment(BaseModel):
+    id: str
+    model_id: str
+    version: int
+    status: str
+    host_port: int
+    container: str
+    created_by_email: str | None = None
+    created_at: datetime
+    archived_at: datetime
+    purge_at: datetime
+    days_remaining: int
+
+
 class Deployment(BaseModel):
     id: str
     model_id: str
     version: int
     job_id: str
     status: str
+    stage: str | None = None
+    percent: int = 0
     host_port: int
     url: str
     container: str
@@ -64,6 +81,8 @@ async def allocate_deployment(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except NoPortAvailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except VersionAlreadyDeployed as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _as_response(
         await service.get(org_id=principal.org_id, user_id=principal.user_id, dep_id=created["id"])
     )
@@ -79,6 +98,33 @@ async def list_deployments(
         org_id=principal.org_id, user_id=principal.user_id, model_id=model_id
     )
     return [_as_response(doc) for doc in docs]
+
+
+@router.get("/deployments/archive", response_model=list[ArchivedDeployment])
+async def list_archived_deployments(
+    request: Request,
+    principal: Principal = Depends(get_principal),
+) -> list[ArchivedDeployment]:
+    docs = await request.app.state.deployments.list_archived(
+        org_id=principal.org_id, user_id=principal.user_id
+    )
+    now = datetime.now(UTC)
+    return [
+        ArchivedDeployment(
+            id=doc["id"],
+            model_id=doc["model_id"],
+            version=doc["version"],
+            status=doc["status"],
+            host_port=doc["host_port"],
+            container=doc["container"],
+            created_by_email=doc.get("created_by_email"),
+            created_at=doc["created_at"],
+            archived_at=doc["archived_at"],
+            purge_at=doc["purge_at"],
+            days_remaining=max(0, ceil((doc["purge_at"] - now).total_seconds() / 86400)),
+        )
+        for doc in docs
+    ]
 
 
 @router.get("/deployments/{dep_id}", response_model=Deployment)
@@ -109,6 +155,8 @@ async def deallocate_deployment(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DeploymentBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DeprovisionFailed as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return _as_response(await service.get(org_id=principal.org_id, user_id=principal.user_id, dep_id=dep_id))
 
 

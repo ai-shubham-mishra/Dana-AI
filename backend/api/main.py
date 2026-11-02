@@ -82,6 +82,10 @@ def create_app(
             datasets_schema=settings.datasets_schema,
             model_registry=registry,
         )
+        try:
+            await app.state.training.reconcile()
+        except Exception:
+            logger.exception("Could not reconcile training jobs left over from a previous run")
         provisioning = replace(ProvisioningConfig.from_env(), training_root=settings.training_output_dir)
         orchestrator = (orchestrator_factory or build_default_orchestrator)(provisioning)
         deployments_http = httpx.AsyncClient()

@@ -24,6 +24,7 @@ class ModelSource(Protocol):
 
 
 LogSink = Callable[[str], None]
+ProgressSink = Callable[[str, int], None]
 
 
 class ImageBuilder(Protocol):

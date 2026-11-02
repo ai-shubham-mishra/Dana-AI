@@ -1,16 +1,17 @@
 import asyncio
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 
 from api.main import create_app
 from integrations.deployments.leases import NoPortAvailable, PortLeases
-from integrations.deployments.service import DeploymentBusy, DeploymentService
+from integrations.deployments.service import DeploymentBusy, DeploymentService, DeprovisionFailed, VersionAlreadyDeployed
 from integrations.model_registry.registry import ModelRegistry
 from tests.test_api import ORG_A, USER_1, auth, member, mint, raw_db, settings, static_secret  # noqa: F401
 
@@ -47,12 +48,16 @@ class FakeOrchestrator:
     def container_name(instance_id):
         return f"dana-mmm-{instance_id}"
 
-    def provision(self, run_id, deploy_cloud=True, *, instance_id=None, host_port=None, log=None):
+    def provision(self, run_id, deploy_cloud=True, *, instance_id=None, host_port=None, log=None, progress=None):
         if self.gate is not None:
             self.gate.wait(5)
+        if progress:
+            progress("Building the container image", 40)
         log("Building the container image")
         if self.fail:
             raise RuntimeError("docker build failed")
+        if progress:
+            progress("Starting the container", 80)
         log("Starting the container")
         self.provisioned.append((run_id, instance_id, host_port))
 
@@ -124,6 +129,8 @@ def test_allocate_goes_live_and_deallocate_releases_port(settings, tmp_path):
         await wait_idle(service)
         dep = await service.get(org_id=ORG_A, user_id=USER_1, dep_id=created["id"])
         assert dep["status"] == "running"
+        assert dep["stage"] == "Live"
+        assert dep["percent"] == 100
         assert dep["health"]["state"] == "live"
         assert dep["url"] == f"http://127.0.0.1:{dep['host_port']}"
         assert orch.provisioned == [("job-1", created["id"], dep["host_port"])]
@@ -142,12 +149,63 @@ def test_allocate_goes_live_and_deallocate_releases_port(settings, tmp_path):
     run_with_db(settings, body)
 
 
+def test_deallocate_archives_for_seven_days_and_purge_removes_it(settings, tmp_path):
+    orch = FakeOrchestrator()
+
+    async def body(db):
+        await seed_version(db)
+        service = make_service(db, orch, http=health_client(), logs_dir=tmp_path)
+        created = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email="a@b.c")
+        await wait_idle(service)
+        await service.deallocate(org_id=ORG_A, user_id=USER_1, dep_id=created["id"], actor_email="a@b.c")
+
+        assert await service.list_deployments(org_id=ORG_A, user_id=USER_1, model_id="m1") == []
+        archived = await service.list_archived(org_id=ORG_A, user_id=USER_1)
+        assert [doc["id"] for doc in archived] == [created["id"]]
+        retention = archived[0]["purge_at"] - archived[0]["archived_at"]
+        assert retention.days == 7
+        assert await service.list_archived(org_id=ORG_A, user_id="someone-else") == []
+
+        await db.deployments.update_one({"id": created["id"]}, {"$set": {"purge_at": datetime.now(UTC) - timedelta(seconds=1)}})
+        assert await service.purge_due() == 1
+        assert await db.deployments.count_documents({"id": created["id"]}) == 0
+        await service.close()
+
+    run_with_db(settings, body)
+
+
+def test_failed_stop_keeps_container_running_and_port_leased(settings, tmp_path):
+    class StuckOrchestrator(FakeOrchestrator):
+        def deprovision(self, instance_id):
+            raise RuntimeError("docker daemon unavailable")
+
+    orch = StuckOrchestrator()
+
+    async def body(db):
+        await seed_version(db)
+        service = make_service(db, orch, http=health_client(), logs_dir=tmp_path)
+        created = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email="a@b.c")
+        await wait_idle(service)
+        with pytest.raises(DeprovisionFailed, match="docker daemon unavailable"):
+            await service.deallocate(org_id=ORG_A, user_id=USER_1, dep_id=created["id"], actor_email="a@b.c")
+
+        dep = await service.get(org_id=ORG_A, user_id=USER_1, dep_id=created["id"])
+        assert dep["status"] == "running"
+        assert "Could not stop container" in dep["error"]
+        assert await db.port_leases.count_documents({}) == 1
+        assert await service.list_archived(org_id=ORG_A, user_id=USER_1) == []
+        await service.close()
+
+    run_with_db(settings, body)
+
+
 def test_each_deployment_gets_its_own_port(settings, tmp_path):
     async def body(db):
         await seed_version(db)
+        await seed_version(db, version=2, job_id="job-2")
         service = make_service(db, FakeOrchestrator(), http=health_client(), logs_dir=tmp_path)
         first = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email=None)
-        second = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email=None)
+        second = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=2, actor_email=None)
         await wait_idle(service)
         ports = {
             (await service.get(org_id=ORG_A, user_id=USER_1, dep_id=doc["id"]))["host_port"]
@@ -155,6 +213,42 @@ def test_each_deployment_gets_its_own_port(settings, tmp_path):
         }
         assert len(ports) == 2
         await service.close()
+
+    run_with_db(settings, body)
+
+
+def test_a_version_allows_only_one_active_container(settings, tmp_path):
+    async def body(db):
+        await seed_version(db)
+        service = make_service(db, FakeOrchestrator(), http=health_client(), logs_dir=tmp_path)
+        first = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email=None)
+        with pytest.raises(VersionAlreadyDeployed):
+            await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email=None)
+        await wait_idle(service)
+        await service.deallocate(org_id=ORG_A, user_id=USER_1, dep_id=first["id"], actor_email=None)
+        again = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email=None)
+        await wait_idle(service)
+        assert (await service.get(org_id=ORG_A, user_id=USER_1, dep_id=again["id"]))["status"] == "running"
+        await service.close()
+
+    run_with_db(settings, body)
+
+
+def test_db_unique_index_blocks_a_second_active_container(settings, tmp_path):
+    async def body(db):
+        await seed_version(db)
+        await db.deployments.create_index(
+            [("model_id", 1), ("version", 1)], unique=True,
+            partialFilterExpression={"active": True}, name="one_active_container_per_version",
+        )
+        now = datetime.now(UTC)
+        base = {"org_id": ORG_A, "user_id": USER_1, "model_id": "m1", "version": 1, "job_id": "job-1",
+                "status": "running", "active": True, "created_at": now, "updated_at": now}
+        await db.deployments.insert_one({**base, "id": "a1"})
+        with pytest.raises(DuplicateKeyError):
+            await db.deployments.insert_one({**base, "id": "a2"})
+        await db.deployments.update_one({"id": "a1"}, {"$unset": {"active": ""}})
+        await db.deployments.insert_one({**base, "id": "a3"})
 
     run_with_db(settings, body)
 
@@ -187,6 +281,7 @@ def test_failed_provision_marks_failed_and_frees_port(settings, tmp_path):
         await wait_idle(service)
         dep = await service.get(org_id=ORG_A, user_id=USER_1, dep_id=created["id"])
         assert dep["status"] == "failed"
+        assert dep["stage"] == "Failed"
         assert dep["error"] == "docker build failed"
         assert await db.port_leases.count_documents({}) == 0
         assert orch.removed == [created["id"]]
@@ -265,6 +360,7 @@ def test_tail_logs_replays_history_and_ends_after_deallocate(settings, tmp_path)
         assert lines[0] == "Building the container image"
         assert "Starting the container" in lines
         assert any("is live" in line for line in lines)
+        assert lines[-1] == "Container deprovisioned"
         await service.close()
 
     run_with_db(settings, body)

@@ -28,4 +28,10 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.deployments.create_index(
         [("org_id", ASCENDING), ("user_id", ASCENDING), ("model_id", ASCENDING)]
     )
+    await db.deployments.create_index(
+        [("model_id", ASCENDING), ("version", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"active": True},
+        name="one_active_container_per_version",
+    )
     await db.port_leases.create_index([("owner", ASCENDING)])

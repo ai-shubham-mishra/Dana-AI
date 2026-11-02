@@ -123,6 +123,11 @@ class TrainingService:
         stored_name = None
         if model_id is None:
             stored_name = await self._check_new_model_name(org_id=org_id, user_id=user_id, raw=model_name)
+        else:
+            if self._models is None:
+                raise PlanError("model registry is not configured")
+            if await self._models.get_model(org_id=org_id, user_id=user_id, model_id=model_id) is None:
+                raise LookupError(f"model {model_id} was not found")
         await validate_sources(self._connector_pool, self._datasets_schema, plan)
         job_id = uuid.uuid4().hex
         now = _now()
@@ -209,6 +214,7 @@ class TrainingService:
         kpi: str,
         channels: list[str],
         date_range: str,
+        actor_email: str | None = None,
     ) -> str:
         request = validate_request(
             model=model, kpi=kpi, channels=channels, date_range=date_range, spec=self._spec
@@ -221,6 +227,7 @@ class TrainingService:
                 "org_id": org_id,
                 "user_id": user_id,
                 "chat_id": chat_id,
+                "requested_by_email": actor_email,
                 "title": _title(request),
                 "kind": JOB_KIND,
                 "status": "queued",
@@ -499,8 +506,22 @@ class TrainingService:
                 source_version=job.get("source_version"),
             )
             await self._update(job_id, model_id=version["model_id"], model_version=version["version"])
-        except Exception:
+        except Exception as exc:
             logger.exception("could not record model version for training job %s", job_id)
+            await self._update(
+                job_id, status="failed", stage="failed", message="Training failed",
+                error=f"Trained, but the model version could not be saved: {type(exc).__name__}",
+            )
+
+    async def reconcile(self) -> int:
+        result = await self._db.jobs.update_many(
+            {"status": {"$in": ["queued", "running"]}},
+            {"$set": {"status": "failed", "stage": "failed", "message": "Training failed",
+                      "error": "Training was interrupted by a server restart", "updated_at": _now()}},
+        )
+        if result.modified_count:
+            logger.warning("Marked %d training job(s) interrupted by a restart", result.modified_count)
+        return result.modified_count
 
     async def _fail(self, job_id: str, org_id: str, user_id: str, message: str) -> None:
         await self._update(job_id, status="failed", stage="failed", message="Training failed", error=message)

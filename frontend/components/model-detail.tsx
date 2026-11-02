@@ -3,13 +3,14 @@
 import { ChevronLeft, Loader2, Play, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { CollapsibleSection } from "@/components/collapsible-section";
 import { DeleteModelDialog } from "@/components/delete-model-dialog";
 import { KeyValueTree } from "@/components/key-value-tree";
 import { LogTerminal } from "@/components/log-terminal";
 import { HEALTH_STYLE, HealthPill, Pill, formatWhen, modelHref, normalizeModelName } from "@/components/models-ui";
+import { JobProgressBar } from "@/components/job-primitives";
 import { RetrainDialog } from "@/components/retrain-dialog";
 import { useDeploymentLogs } from "@/lib/deployment-logs";
 import {
@@ -18,6 +19,7 @@ import {
   useDeleteModel,
   useDeleteVersion,
   useDeployments,
+  useJobs,
   useModel,
   useModels,
   useRetrainVersion,
@@ -124,6 +126,9 @@ function DeploymentCard({ deployment }: { deployment: Deployment }) {
             <span className="text-sm font-semibold">v{deployment.version}</span>
             <Pill tone={HEALTH_STYLE[deployment.status] ?? HEALTH_STYLE.stopped}>{deployment.status}</Pill>
             <HealthPill state={deployment.health.state} />
+            {deployment.status === "provisioning" && deployment.stage ? (
+              <span className="text-xs text-muted-foreground">{deployment.stage}</span>
+            ) : null}
           </div>
           <a
             href={deployment.url}
@@ -134,7 +139,7 @@ function DeploymentCard({ deployment }: { deployment: Deployment }) {
             {deployment.url}
           </a>
           <div className="mt-0.5 text-xs text-muted-foreground">
-            Port {deployment.host_port} · {deployment.created_by_email ?? "unknown"} · {formatWhen(deployment.created_at)}
+            Port {deployment.host_port} · {deployment.created_by_email ?? "not recorded"} · {formatWhen(deployment.created_at)}
           </div>
         </div>
 
@@ -215,6 +220,7 @@ function VersionRow({
   onAllocate,
   onDelete,
   allocating,
+  deployment,
 }: {
   version: ModelVersion;
   selected: boolean;
@@ -223,7 +229,11 @@ function VersionRow({
   onAllocate: () => void;
   onDelete: () => void;
   allocating: boolean;
+  deployment: Deployment | null;
 }) {
+  const tags = version.tags ?? [];
+  const provisioning = deployment?.status === "provisioning";
+  const busy = allocating || deployment !== null;
   return (
     <li
       className={cn(
@@ -232,7 +242,28 @@ function VersionRow({
       )}
     >
       <button type="button" onClick={onSelect} className="min-w-0 text-left">
-        <div className="text-sm font-semibold">Version {version.version}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">Version {version.version}</span>
+          {version.job_id ? (
+            <span
+              title={version.job_id}
+              className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+            >
+              job {version.job_id.slice(0, 8)}
+            </span>
+          ) : null}
+          {tags.map((tag) => (
+            <span
+              key={tag}
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                tag === "latest" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
+              )}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
         <div className="text-xs text-muted-foreground">
           {version.source}
           {version.source_version ? ` from v${version.source_version}` : ""}
@@ -251,11 +282,13 @@ function VersionRow({
         <button
           type="button"
           onClick={onAllocate}
-          disabled={allocating}
-          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          disabled={busy}
+          aria-busy={busy}
+          title={deployment && !provisioning ? "This version already has a running container. Deallocate it to allocate again." : undefined}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {allocating ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
-          Allocate container
+          {allocating || provisioning ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+          {provisioning ? "Allocating…" : deployment ? "Container running" : "Allocate container"}
         </button>
         <button
           type="button"
@@ -266,6 +299,15 @@ function VersionRow({
           <Trash2 className="size-3.5" aria-hidden />
         </button>
       </div>
+      {deployment && provisioning ? (
+        <div className="basis-full space-y-1.5">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="truncate text-muted-foreground">{deployment.stage ?? "Starting"}</span>
+            <span className="font-mono tabular-nums text-primary">{Math.round(deployment.percent)}%</span>
+          </div>
+          <JobProgressBar percent={deployment.percent} status="running" />
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -276,6 +318,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
   const router = useRouter();
   const model = useModel(modelId);
   const deployments = useDeployments();
+  const jobs = useJobs();
   const allocate = useAllocateDeployment();
   const retrain = useRetrainVersion();
   const deleteModel = useDeleteModel();
@@ -285,6 +328,13 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
   const [retrainJobId, setRetrainJobId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const retrainJob = retrainJobId ? jobs.data?.find((job) => job.id === retrainJobId) : undefined;
+  const retrainFinished = retrainJob?.status === "succeeded" || retrainJob?.status === "failed";
+  const { refetch: refetchModel } = model;
+  useEffect(() => {
+    if (retrainFinished) void refetchModel();
+  }, [retrainFinished, refetchModel]);
 
   const versions = model.data?.versions ?? [];
   const current = versions.find((v) => v.version === selectedVersion) ?? versions[0] ?? null;
@@ -345,7 +395,9 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {retrainJobId ? (
-            <Pill tone={HEALTH_STYLE.live}>Retraining queued · job {retrainJobId.slice(0, 8)}</Pill>
+            <Pill tone={HEALTH_STYLE.live}>
+              Retrain job {retrainJobId.slice(0, 8)} · {retrainJob?.status ?? "queued"}
+            </Pill>
           ) : null}
           {model.data ? (
             <button
@@ -380,6 +432,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
                 setDeleteTarget({ kind: "version", version });
               }}
               allocating={allocate.isPending && allocate.variables?.version === version.version}
+              deployment={activeDeployments.find((d) => d.version === version.version) ?? null}
             />
           ))}
         </ul>

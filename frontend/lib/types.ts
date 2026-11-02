@@ -126,6 +126,7 @@ export type ModelVersion = {
   params: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   created_by_email: string | null;
+  tags: string[];
   created_at: string;
 };
 
@@ -156,11 +157,27 @@ export type Deployment = {
   url: string;
   container: string;
   message: string | null;
+  stage: string | null;
+  percent: number;
   error: string | null;
   created_by_email: string | null;
   created_at: string;
   updated_at: string;
   health: { state: DeploymentHealthState; detail: string | null };
+};
+
+export type ArchivedDeployment = {
+  id: string;
+  model_id: string;
+  version: number;
+  status: DeploymentStatus;
+  host_port: number;
+  container: string;
+  created_by_email: string | null;
+  created_at: string;
+  archived_at: string;
+  purge_at: string;
+  days_remaining: number;
 };
 
 export type RetrainResult = { job_id: string };

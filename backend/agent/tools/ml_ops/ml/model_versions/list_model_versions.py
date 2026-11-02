@@ -27,7 +27,7 @@ def _describe_version(version: dict[str, Any]) -> str:
     return "\n".join(
         [
             f"- Version {version.get('version')} ({version.get('source', 'train')}, "
-            f"created {version.get('created_at')} by {version.get('created_by_email') or 'unknown'}, "
+            f"created {version.get('created_at')} by {version.get('created_by_email') or 'not recorded'}, "
             f"job {version.get('job_id')})",
             f"  KPI: {params.get('kpi', '?')}",
             f"  Channels: {_channels(params)}",

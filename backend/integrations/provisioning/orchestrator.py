@@ -20,6 +20,7 @@ from integrations.provisioning.ports import (
     ImageBuilder,
     LogSink,
     ModelSource,
+    ProgressSink,
     SourceCloner,
 )
 
@@ -60,27 +61,31 @@ class ProvisioningOrchestrator:
         instance_id: str | None = None,
         host_port: int | None = None,
         log: LogSink | None = None,
+        progress: ProgressSink | None = None,
     ) -> ProvisionResult:
         instance = _slug(instance_id or run_id)
-        if log:
-            log(f"Resolving model run {run_id}")
+
+        def step(message: str, percent: int) -> None:
+            if log:
+                log(message)
+            if progress:
+                progress(message, percent)
+
+        step(f"Resolving model run {run_id}", 5)
         model = self.model_source.resolve(run_id)
-        if log:
-            log("Cloning the MMM library")
+        step("Cloning the MMM library", 15)
         checkout = self.cloner.checkout()
-        if log:
-            log(f"Library at {checkout.sha[:12]}; preparing build context")
+        step(f"Library at {checkout.sha[:12]}; preparing build context", 30)
         context_dir = prepare_build_context(
             checkout.library_dir, model, self.config.workdir / "builds" / instance / "context"
         )
-        if log:
-            log("Building the container image")
+        step("Building the container image", 40)
         image = self.builder.build(context_dir, DOCKERFILE, f"{self.config.image_repo}:{instance}", log=log)
-        if log:
-            log("Starting the container")
+        step("Starting the container", 80)
         container = self.runtime.run(
             image, self.container_name(instance), LOCAL_ENV, self.config.container_port, host_port=host_port
         )
+        step("Waiting for the health check", 90)
         health = self.runtime.wait_healthy(
             container, self.config.health_timeout_s, self.config.health_interval_s, log=log
         )
