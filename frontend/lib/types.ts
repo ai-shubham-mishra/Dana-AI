@@ -198,6 +198,7 @@ export type Plan = {
   name: string;
   description: string;
   visibility: PlanVisibility;
+  content: string;
   spec: PlanSpec;
   owner_id: string;
   owner_email: string | null;
@@ -208,7 +209,7 @@ export type PlanInput = {
   name: string;
   description: string;
   visibility: PlanVisibility;
-  spec: PlanSpec;
+  content: string;
 };
 
 export type PlanRunResult = { job_id: string };

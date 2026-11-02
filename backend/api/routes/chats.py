@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from agent.request_context import parse_client_timezone
 from agent.runtime import current_todos, pending_approval, stream_turn
+from agent.slash_commands import expand_slash_command
 from agent.tools.system_ops.hitl.ask_user import check_answer
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.keyvault.client import KeyVaultError
@@ -211,7 +212,12 @@ async def send_message(
         raise
 
     return _stream_response(
-        request, scope, agent, actor_email=principal.email, content=body.content, timezone=_client_timezone(request)
+        request,
+        scope,
+        agent,
+        actor_email=principal.email,
+        content=expand_slash_command(body.content),
+        timezone=_client_timezone(request),
     )
 
 

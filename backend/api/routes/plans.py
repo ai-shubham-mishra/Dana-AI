@@ -6,7 +6,8 @@ from pydantic import BaseModel, ValidationError
 
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken
-from integrations.plans.store import InvalidPlan, PlanNameTaken
+from integrations.plans.markdown import InvalidPlan
+from integrations.plans.store import PlanNameTaken
 from integrations.training.mmm.plan import MMMPlan, PlanError
 
 router = APIRouter(prefix="/api/v1")
@@ -16,14 +17,14 @@ class PlanCreate(BaseModel):
     name: str
     description: str = ""
     visibility: str = "private"
-    spec: dict[str, Any]
+    content: str
 
 
 class PlanPatch(BaseModel):
     name: str | None = None
     description: str | None = None
     visibility: str | None = None
-    spec: dict[str, Any] | None = None
+    content: str | None = None
 
 
 class PlanRunRequest(BaseModel):
@@ -35,6 +36,7 @@ class PlanOut(BaseModel):
     name: str
     description: str
     visibility: str
+    content: str
     spec: dict[str, Any]
     owner_id: str
     owner_email: str | None = None
@@ -71,7 +73,7 @@ async def create_plan(body: PlanCreate, request: Request, principal: Principal =
             name=body.name,
             description=body.description,
             visibility=body.visibility,
-            spec=body.spec,
+            content=body.content,
         )
     except PlanNameTaken as exc:
         raise _name_conflict(exc) from exc

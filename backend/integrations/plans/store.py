@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import ValidationError
 from pymongo import DESCENDING
 
+from integrations.plans.markdown import InvalidPlan, parse_plan_markdown, render_plan_markdown
 from integrations.training.mmm.plan import MMMPlan, PlanError
 
 PLAN_PROJECTION = {"_id": 0, "org_id": 0}
@@ -13,10 +14,6 @@ PLAN_NAME_MAX = 80
 PLAN_NAME_RE = re.compile(r"^\w[\w \-.()·]*$")
 VISIBILITIES = ("private", "org")
 ID_BYTES = 8
-
-
-class InvalidPlan(ValueError):
-    pass
 
 
 class PlanNameTaken(Exception):
@@ -48,6 +45,12 @@ def validate_spec(raw: dict[str, Any]) -> dict[str, Any]:
     except (ValidationError, PlanError) as exc:
         raise InvalidPlan(f"the plan is invalid: {exc}") from exc
     return plan.model_dump(mode="json", exclude={"rationale"})
+
+
+def content_to_spec(content: str) -> tuple[str, dict[str, Any]]:
+    """Parse the bulleted markdown, validate it, and return the canonical markdown with the derived spec."""
+    spec = validate_spec(parse_plan_markdown(content))
+    return render_plan_markdown(spec), spec
 
 
 def _now() -> datetime:
@@ -89,11 +92,11 @@ class PlanStore:
         name: str,
         description: str,
         visibility: str,
-        spec: dict[str, Any],
+        content: str,
     ) -> dict[str, Any]:
         name = normalize_plan_name(name)
         visibility = validate_visibility(visibility)
-        spec = validate_spec(spec)
+        content, spec = content_to_spec(content)
         await self.ensure_name_free(org_id=org_id, user_id=user_id, name=name)
         now = _now()
         doc = {
@@ -104,6 +107,7 @@ class PlanStore:
             "name": name,
             "description": description.strip(),
             "visibility": visibility,
+            "content": content,
             "spec": spec,
             "created_at": now,
             "updated_at": now,
@@ -125,8 +129,8 @@ class PlanStore:
             updates["description"] = (changes["description"] or "").strip()
         if "visibility" in changes:
             updates["visibility"] = validate_visibility(changes["visibility"])
-        if "spec" in changes:
-            updates["spec"] = validate_spec(changes["spec"])
+        if "content" in changes:
+            updates["content"], updates["spec"] = content_to_spec(changes["content"])
         if "name" in updates or "visibility" in updates:
             await self.ensure_name_free(
                 org_id=org_id,
@@ -144,4 +148,7 @@ class PlanStore:
 
 
 def _public(doc: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in doc.items() if key not in ("_id", "org_id")}
+    public = {key: value for key, value in doc.items() if key not in ("_id", "org_id")}
+    if "content" not in public and "spec" in public:
+        public["content"] = render_plan_markdown(public["spec"])
+    return public

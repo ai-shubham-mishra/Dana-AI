@@ -1,11 +1,12 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { BookMarked, Globe2, Lock, Pencil, Play, Plus, Search, Trash2, User, Users, X } from "lucide-react";
+import { BookMarked, Eye, Globe2, Lock, Pencil, Play, Plus, Search, Trash2, User, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { PlanFormDialog } from "@/components/plan-form-dialog";
 import { PlanRunDialog } from "@/components/plan-run-dialog";
+import { PlanViewDialog } from "@/components/plan-view-dialog";
 import { Pill } from "@/components/models-ui";
 import { useDeletePlan, usePlans } from "@/lib/queries";
 import type { Plan } from "@/lib/types";
@@ -25,6 +26,7 @@ export function PlansList() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [editor, setEditor] = useState<{ plan: Plan | null } | null>(null);
+  const [viewing, setViewing] = useState<Plan | null>(null);
   const [running, setRunning] = useState<Plan | null>(null);
   const [deleting, setDeleting] = useState<Plan | null>(null);
 
@@ -140,29 +142,39 @@ export function PlansList() {
                     {plan.description || "No description"}
                   </p>
                 </div>
-                {plan.is_owner ? (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setEditor({ plan })}
-                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      aria-label={`Edit ${plan.name}`}
-                    >
-                      <Pencil className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deletePlan.reset();
-                        setDeleting(plan);
-                      }}
-                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600"
-                      aria-label={`Delete ${plan.name}`}
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                ) : null}
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setViewing(plan)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`View ${plan.name}`}
+                  >
+                    <Eye className="size-4" />
+                  </button>
+                  {plan.is_owner ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setEditor({ plan })}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label={`Edit ${plan.name}`}
+                      >
+                        <Pencil className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deletePlan.reset();
+                          setDeleting(plan);
+                        }}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600"
+                        aria-label={`Delete ${plan.name}`}
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -199,6 +211,16 @@ export function PlansList() {
       ) : null}
 
       {editor ? <PlanFormDialog plan={editor.plan} onOpenChange={(open) => !open && setEditor(null)} /> : null}
+      {viewing ? (
+        <PlanViewDialog
+          plan={viewing}
+          onOpenChange={(open) => !open && setViewing(null)}
+          onEdit={(plan) => {
+            setViewing(null);
+            setEditor({ plan });
+          }}
+        />
+      ) : null}
 
       {running ? <PlanRunDialog plan={running} onOpenChange={(open) => !open && setRunning(null)} /> : null}
 

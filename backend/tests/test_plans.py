@@ -7,13 +7,15 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from agent.runtime import approval_payload
+from agent.slash_commands import expand_slash_command
 from agent.tools.base import BaseTool
 from agent.tools.ml_ops.ml.plans.list_plans import ListPlansTool
 from agent.tools.ml_ops.ml.plans.run_plan import RunPlanTool
 from agent.tools.ml_ops.ml.plans.save_plan import SavePlanTool
 from agent.tools.registry import STATIC_TOOLS, interrupt_policy
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken
-from integrations.plans.store import PlanNameTaken
+from integrations.plans.markdown import InvalidPlan, parse_plan_markdown, render_plan_markdown
+from integrations.plans.store import PlanNameTaken, content_to_spec
 from integrations.training.mmm.plan import PlanError
 from integrations.training.scope import JobScope, bind_scope  # noqa: F401
 from tests.test_api import ORG_A, USER_1, USER_2, auth, client, member, mint, raw_db, settings  # noqa: F401
@@ -34,6 +36,21 @@ SPEC = {
     "date_end": "2024-12-31",
     "overrides": {},
 }
+PLAN_MD = """# Weekly Revenue
+- KPI: revenue
+- Channels: tv, search
+- Controls: price
+- Window: 2024-01-01 to 2024-12-31
+- Sources:
+  - Table: sales_daily
+    - Date column: date
+    - Metrics: revenue=revenue; tv=tv_spend; price=avg_price
+  - Table: google_ads
+    - Date column: date
+    - Metrics: search=search_spend
+- Preparation:
+- Overrides:
+"""
 
 
 @pytest.fixture()
@@ -41,10 +58,10 @@ def second_member(raw_db):
     raw_db.memberships.insert_one({"user_id": USER_2, "org_id": ORG_A, "role": "analyst", "status": "active"})
 
 
-def _create(client, token, name, visibility="private", spec=None):
+def _create(client, token, name, visibility="private", content=None):
     return client.post(
         "/api/v1/plans",
-        json={"name": name, "description": "d", "visibility": visibility, "spec": spec or SPEC},
+        json={"name": name, "description": "d", "visibility": visibility, "content": content or PLAN_MD},
         headers=auth(token),
     )
 
@@ -127,9 +144,83 @@ def test_owner_can_rename_and_delete(client, member):
 
 def test_invalid_spec_visibility_and_name_are_rejected(client, member):
     token = mint(user=USER_1)
-    assert _create(client, token, "Bad spec", spec={"kpi": "revenue"}).status_code == 422
+    assert _create(client, token, "Bad spec", content="- KPI: revenue\n").status_code == 422
     assert _create(client, token, "Bad visibility", visibility="public").status_code == 422
     assert _create(client, token, "").status_code == 422
+
+
+def test_markdown_plan_round_trips_through_the_parser():
+    raw = parse_plan_markdown(PLAN_MD)
+    assert raw["kpi"] == "revenue" and raw["channels"] == ["tv", "search"]
+    assert raw["date_start"] == "2024-01-01" and raw["date_end"] == "2024-12-31"
+    assert raw["sources"][0]["metrics"] == {"revenue": "revenue", "tv": "tv_spend", "price": "avg_price"}
+    canonical, spec = content_to_spec(PLAN_MD)
+    assert spec["sources"][1]["table"] == "google_ads"
+    assert render_plan_markdown(parse_plan_markdown(canonical)) == canonical
+
+
+def test_markdown_plan_accepts_preparation_and_overrides():
+    text = """- KPI: revenue
+- Channels: tv, search
+- Window: 2024-01-01 to 2024-12-31
+- Sources:
+  - Table: sales_daily
+    - Date column: date
+    - Metrics: revenue=revenue; tv=tv_spend; search=search_spend
+    - Filters: region=US
+- Preparation:
+  - Lags: tv=0,7
+  - Rolling means: search=7
+  - Holiday country: none
+- Overrides:
+  - adstock_iterations: 300
+  - use_seasonality: false
+"""
+    raw = parse_plan_markdown(text)
+    assert raw["preparation"]["lags"] == {"tv": [0, 7]}
+    assert raw["preparation"]["rolling_means"] == {"search": 7}
+    assert raw["preparation"]["holiday_country"] is None
+    assert raw["overrides"] == {"adstock_iterations": 300, "use_seasonality": False}
+    assert raw["sources"][0]["filters"] == {"region": "US"}
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("not a bullet", "must be a bullet"),
+        ("- Bogus: 1", "unknown field"),
+        ("- KPI: revenue\n- Channels: tv\n- Window: 2024-01-01\n", "window must be"),
+        (
+            "- KPI: revenue\n- Window: 2024-01-01 to 2024-12-31\n- Sources:\n  - Table: t\n"
+            "    - Date column: date\n    - Metrics: revenue=revenue",
+            "the plan is missing: channels",
+        ),
+        ("- KPI: revenue\n- Channels: tv\n- Window: 2024-01-01 to 2024-12-31\n- Sources:\n", "at least one source"),
+        (
+            "- KPI: revenue\n- Channels: tv\n- Window: 2024-01-01 to 2024-12-31\n- Sources:\n"
+            "  - Table: t\n    - Date column: date\n    - Metrics: revenue",
+            "expected 'output=value' pairs",
+        ),
+    ],
+)
+def test_markdown_plan_reports_readable_errors(text, message):
+    with pytest.raises(InvalidPlan, match=message):
+        parse_plan_markdown(text)
+
+
+def test_slash_plan_is_expanded_only_as_a_leading_command():
+    assert expand_slash_command("look at /plan later") == "look at /plan later"
+    assert expand_slash_command("/planning ahead") == "/planning ahead"
+    directive = expand_slash_command("/plan")
+    assert directive.startswith("The user invoked /plan") and "User message:" not in directive
+    with_text = expand_slash_command("/PLANS  Q3 revenue")
+    assert "list_plans" in with_text and with_text.endswith("User message: Q3 revenue")
+
+
+def test_created_plan_returns_its_markdown_content(client, member):
+    body = _create(client, mint(user=USER_1), "Weekly Revenue").json()
+    assert "KPI: revenue" in body["content"]
+    assert body["spec"]["kpi"] == "revenue"
 
 
 def test_run_creates_a_new_model_from_the_saved_plan(client, member, monkeypatch):
@@ -210,12 +301,14 @@ class FakePlans:
         if any(d["name"].lower() == name.lower() for d in self._visible(user_id)):
             raise PlanNameTaken(name)
 
-    async def create(self, *, org_id, user_id, owner_email, name, description, visibility, spec):
+    async def create(self, *, org_id, user_id, owner_email, name, description, visibility, content):
+        _, spec = content_to_spec(content)
         doc = {
             "id": f"plan-{len(self.docs) + 1}",
             "name": name,
             "description": description,
             "visibility": visibility,
+            "content": content,
             "spec": spec,
             "owner_id": user_id,
             "owner_email": owner_email,
@@ -231,6 +324,7 @@ def plan_doc(**changes):
         "name": "Weekly Revenue",
         "description": "",
         "visibility": "private",
+        "content": PLAN_MD,
         "spec": SPEC,
         "owner_id": USER_1,
         "owner_email": "dev@example.com",

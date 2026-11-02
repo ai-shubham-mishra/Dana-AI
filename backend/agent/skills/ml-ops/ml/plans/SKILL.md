@@ -1,13 +1,13 @@
 ---
 name: plans
-description: Use saved training plans. When the user types /plans or asks to run, reuse, or list a plan, list the visible plans, let the user pick one, ask for the new model name, then run it. Also save a plan only when the user explicitly asks.
+description: Use saved training plans. When the user types /plan or /plans, or asks to run, reuse, or list a plan, list the visible plans, let the user pick one, ask for the new model name, then run it. Also save a plan only when the user explicitly asks.
 ---
 
 # Training plans
 
 A plan is a saved, reusable training recipe. Running a plan always trains a brand-new model with the plan's exact stored configuration and date window. Plans never add versions to an existing model. Users create plans themselves on the Plans page, so never ask the user to create one in chat.
 
-## /plans or "run a plan"
+## /plan, /plans or "run a plan"
 
 1. Call `list_plans`. Show the plans as a short list (name, KPI, channels, period, who owns it) only if the user did not already name one.
 2. If the user has not picked a plan, ask which one with `ask_user`, offering the plan names as options.
