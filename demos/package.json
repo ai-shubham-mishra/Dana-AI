@@ -6,8 +6,10 @@
   "type": "module",
   "scripts": {
     "capture": "node scripts/capture.mjs",
+    "capture:pitch": "node scripts/capture-pitch.mjs",
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts DanaAiDemo out/dana-ai-demo.mp4",
+    "render:pitch": "remotion render src/index.ts PitchVideo out/dana-ai-pitch.mp4",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

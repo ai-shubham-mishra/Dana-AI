@@ -1,0 +1,37 @@
+[
+  {
+    "id": "intro",
+    "caption": "Marketing mix models, trained in minutes instead of days",
+    "text": "Dana AI. Marketing mix models, trained in minutes instead of days."
+  },
+  {
+    "id": "problem",
+    "caption": "Waiting days for a model means waiting days for the answer",
+    "text": "Marketing teams often wait days for a marketing mix model. The data gets exported, an analyst picks it up, and every question waits in a queue."
+  },
+  {
+    "id": "solution",
+    "caption": "Describe the model in chat. Dana asks only for the choices that matter.",
+    "text": "Dana AI moves that work into a chat. Describe the model you need. Dana asks only for the choices that matter, and the run starts while you watch."
+  },
+  {
+    "id": "train",
+    "caption": "Training through the agent: every choice is yours to approve",
+    "text": "Here we ask Dana to train a model. It reads the connected data and asks the questions that matter: which connector holds the data, which KPI to predict, which channels to include, and which controls to add. Every answer is yours to approve. Once the choices are in, the run is queued, and Dana reports back in the same chat."
+  },
+  {
+    "id": "lookup",
+    "caption": "Job lookup through the agent, in the same chat",
+    "text": "Later, ask Dana where a job stands. It looks up the run and answers with the status, the KPI and the date range, without leaving the chat."
+  },
+  {
+    "id": "jobs",
+    "caption": "Job lookup in the frontend: every run, one table",
+    "text": "Or open the Jobs page. Every run, its progress and its status sit in one table, and the details are one click away."
+  },
+  {
+    "id": "outro",
+    "caption": "Transparent marketing mix modelling, in minutes",
+    "text": "Transparent marketing mix modelling, in minutes. Dana AI."
+  }
+]
