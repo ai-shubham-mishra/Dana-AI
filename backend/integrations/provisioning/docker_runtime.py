@@ -111,7 +111,7 @@ class DockerCli:
 
     def follow_logs(self, name: str, sink: LogSink) -> LogFollower:
         process = subprocess.Popen(
-            [self._binary, "logs", "-f", "--tail", "100", name],
+            [self._binary, "logs", "-f", "--tail", "all", name],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

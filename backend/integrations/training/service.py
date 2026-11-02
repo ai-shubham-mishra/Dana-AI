@@ -47,6 +47,8 @@ JOB_PROJECTION = {
     "params": 1,
     "metrics": 1,
     "artifact": 1,
+    "model_id": 1,
+    "model_version": 1,
     "created_at": 1,
     "updated_at": 1,
 }
@@ -83,6 +85,7 @@ class TrainingService:
         command_factory: CommandFactory | None = None,
         connector_pool: Any | None = None,
         datasets_schema: str = "datasets",
+        model_registry: Any | None = None,
     ):
         self._db = db
         self._blob = blob
@@ -93,10 +96,22 @@ class TrainingService:
         self._command_factory = command_factory or self._mmm_command
         self._connector_pool = connector_pool
         self._datasets_schema = datasets_schema
+        self._models = model_registry
         self._slots = asyncio.Semaphore(1)
         self._tasks: set[asyncio.Task] = set()
 
-    async def submit_mmm_plan(self, *, org_id: str, user_id: str, chat_id: str, plan: MMMPlan) -> str:
+    async def submit_mmm_plan(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        plan: MMMPlan,
+        model_id: str | None = None,
+        source: str = "train",
+        source_version: int | None = None,
+        actor_email: str | None = None,
+    ) -> str:
         if self._connector_pool is None:
             raise PlanError("connector data is not configured for training")
         await validate_sources(self._connector_pool, self._datasets_schema, plan)
@@ -118,6 +133,11 @@ class TrainingService:
                 "params": plan.to_dict(),
                 "metrics": None,
                 "artifact": None,
+                "model_id": model_id,
+                "model_version": None,
+                "source": source,
+                "source_version": source_version,
+                "requested_by_email": actor_email,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -127,6 +147,35 @@ class TrainingService:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job_id
+
+    async def retrain_version(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        model_id: str,
+        version: int,
+        actor_email: str | None = None,
+    ) -> str:
+        if self._models is None:
+            raise PlanError("model registry is not configured")
+        source = await self._models.get_version(
+            org_id=org_id, user_id=user_id, model_id=model_id, version=version
+        )
+        if source is None:
+            raise LookupError(f"model {model_id} has no version {version}")
+        plan = MMMPlan.model_validate(source["params"])
+        return await self.submit_mmm_plan(
+            org_id=org_id,
+            user_id=user_id,
+            chat_id=chat_id,
+            plan=plan,
+            model_id=model_id,
+            source="retrain",
+            source_version=version,
+            actor_email=actor_email,
+        )
 
     async def submit(
         self,
@@ -197,7 +246,9 @@ class TrainingService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def delete_jobs(self, *, org_id: str, user_id: str, job_ids: list[str]) -> dict[str, Any]:
+    async def delete_jobs(
+        self, *, org_id: str, user_id: str, job_ids: list[str], actor_email: str | None = None
+    ) -> dict[str, Any]:
         scope = {"org_id": org_id, "user_id": user_id}
         cursor = self._db.jobs.find({**scope, "id": {"$in": job_ids}}, {"_id": 0, "id": 1, "status": 1, "artifact": 1})
         found = {doc["id"]: doc async for doc in cursor}
@@ -211,6 +262,14 @@ class TrainingService:
             if doc["status"] in ACTIVE_STATUSES:
                 skipped.append({"id": job_id, "reason": "Job is still running"})
                 continue
+            version = None
+            if self._models is not None:
+                version = await self._models.version_for_job(org_id=org_id, user_id=user_id, job_id=job_id)
+            if version and await self._models.blocking_deployment(
+                org_id=org_id, user_id=user_id, model_id=version["model_id"], version=version["version"]
+            ):
+                skipped.append({"id": job_id, "reason": "Model version is deployed; deallocate it first"})
+                continue
             try:
                 await self._remove_job_files(job_id, doc.get("artifact"))
             except Exception:
@@ -219,6 +278,11 @@ class TrainingService:
                 continue
             await self._db.job_events.delete_many({"job_id": job_id})
             await self._db.jobs.delete_one({**scope, "id": job_id})
+            if version:
+                await self._models.delete_version(
+                    org_id=org_id, user_id=user_id, model_id=version["model_id"],
+                    version=version["version"], actor_email=actor_email,
+                )
             deleted.append(job_id)
         return {"deleted": deleted, "skipped": skipped}
 
@@ -340,6 +404,7 @@ class TrainingService:
                     return
                 result = {**result, "model_path": str(run_dir / MODEL_FILE)}
                 await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)})
+                await self._record_version(job_id, org_id, user_id)
             except asyncio.CancelledError:
                 try:
                     await self._fail(job_id, org_id, user_id, "Training was interrupted by a server shutdown")
@@ -386,6 +451,34 @@ class TrainingService:
         await self._update(job_id, status="succeeded", stage="done", percent=100, message=message,
                            error=None, metrics=result.get("metrics"), artifact=artifact)
         await self._event(job_id, org_id, user_id, "done", 100, message)
+
+    async def _record_version(self, job_id: str, org_id: str, user_id: str) -> None:
+        if self._models is None:
+            return
+        try:
+            job = await self._db.jobs.find_one(
+                {"id": job_id},
+                {"_id": 0, "params": 1, "metrics": 1, "artifact": 1, "model_id": 1, "source": 1,
+                 "source_version": 1, "requested_by_email": 1},
+            )
+            kpi = str((job.get("params") or {}).get("kpi", "model"))
+            version = await self._models.record_version(
+                org_id=org_id,
+                user_id=user_id,
+                job_id=job_id,
+                params=job.get("params") or {},
+                metrics=job.get("metrics"),
+                artifact=job.get("artifact"),
+                actor_email=job.get("requested_by_email"),
+                name=f"MMM · {kpi}",
+                kpi=kpi,
+                model_id=job.get("model_id"),
+                source=job.get("source") or "train",
+                source_version=job.get("source_version"),
+            )
+            await self._update(job_id, model_id=version["model_id"], model_version=version["version"])
+        except Exception:
+            logger.exception("could not record model version for training job %s", job_id)
 
     async def _fail(self, job_id: str, org_id: str, user_id: str, message: str) -> None:
         await self._update(job_id, status="failed", stage="failed", message="Training failed", error=message)
