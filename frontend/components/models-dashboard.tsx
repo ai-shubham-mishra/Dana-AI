@@ -110,17 +110,11 @@ function ModelList({
   );
 }
 
-function DeploymentCard({
-  deployment,
-  selected,
-  onSelectLogs,
-}: {
-  deployment: Deployment;
-  selected: boolean;
-  onSelectLogs: () => void;
-}) {
+function DeploymentCard({ deployment }: { deployment: Deployment }) {
   const deallocate = useDeallocateDeployment();
   const [confirming, setConfirming] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const logs = useDeploymentLogs(logsOpen ? deployment.id : null);
   const busy = deployment.status === "provisioning" || deallocate.isPending;
   const canStop = deployment.status === "running" || deployment.status === "provisioning";
 
@@ -128,7 +122,7 @@ function DeploymentCard({
     <div
       className={cn(
         "rounded-xl border bg-card p-4 transition-all duration-200",
-        selected ? "border-primary/50 shadow-elevated" : "border-border",
+        logsOpen ? "border-primary/50 shadow-elevated" : "border-border",
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -154,11 +148,11 @@ function DeploymentCard({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onSelectLogs}
-            aria-pressed={selected}
+            onClick={() => setLogsOpen((open) => !open)}
+            aria-pressed={logsOpen}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
-              selected ? "border-primary bg-primary text-white" : "border-border hover:bg-muted",
+              logsOpen ? "border-primary bg-primary text-white" : "border-border hover:bg-muted",
             )}
           >
             <Terminal className="size-3.5" aria-hidden />
@@ -205,6 +199,17 @@ function DeploymentCard({
       ) : null}
       {deployment.error ? <p className="mt-3 text-xs text-destructive">{deployment.error}</p> : null}
       {deallocate.error ? <p className="mt-3 text-xs text-destructive">{deallocate.error.message}</p> : null}
+
+      {logsOpen ? (
+        <div className="mt-4">
+          <LogTerminal
+            title={`${deployment.container} · v${deployment.version}`}
+            lines={logs.lines}
+            state={logs.state}
+            error={logs.error}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -268,14 +273,11 @@ function ModelWorkspace({ modelId, deployments }: { modelId: string; deployments
   const retrain = useRetrainVersion();
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [retrainTarget, setRetrainTarget] = useState<ModelVersion | null>(null);
-  const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
   const [retrainJobId, setRetrainJobId] = useState<string | null>(null);
 
   const versions = model.data?.versions ?? [];
   const current = versions.find((v) => v.version === selectedVersion) ?? versions[0] ?? null;
   const modelDeployments = deployments.filter((d) => d.model_id === modelId);
-  const selectedDeployment = modelDeployments.find((d) => d.id === selectedDeploymentId) ?? null;
-  const logs = useDeploymentLogs(selectedDeployment?.id ?? null);
 
   async function confirmRetrain() {
     if (!retrainTarget) return;
@@ -332,27 +334,11 @@ function ModelWorkspace({ modelId, deployments }: { modelId: string; deployments
         ) : (
           <div className="space-y-3">
             {modelDeployments.map((deployment) => (
-              <DeploymentCard
-                key={deployment.id}
-                deployment={deployment}
-                selected={deployment.id === selectedDeploymentId}
-                onSelectLogs={() => setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id)}
-              />
+              <DeploymentCard key={deployment.id} deployment={deployment} />
             ))}
           </div>
         )}
       </CollapsibleSection>
-
-      {selectedDeployment ? (
-        <CollapsibleSection title={`Live logs · v${selectedDeployment.version}`}>
-          <LogTerminal
-            title={selectedDeployment.container}
-            lines={logs.lines}
-            state={logs.state}
-            error={logs.error}
-          />
-        </CollapsibleSection>
-      ) : null}
 
       {model.data && model.data.events.length > 0 ? (
         <CollapsibleSection title="History" count={model.data.events.length} defaultOpen={false}>
