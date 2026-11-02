@@ -9,6 +9,9 @@ from agent.tools.ml_ops.ml.data_prep.prepare_training_data import PrepareTrainin
 from agent.tools.ml_ops.ml.data_prep.update_training_data import UpdateTrainingDataTool
 from agent.tools.ml_ops.ml.model_versions.list_model_versions import ListModelVersionsTool
 from agent.tools.ml_ops.ml.model_versions.retrain_model_version import RetrainModelVersionTool
+from agent.tools.ml_ops.ml.plans.list_plans import ListPlansTool
+from agent.tools.ml_ops.ml.plans.run_plan import RunPlanTool
+from agent.tools.ml_ops.ml.plans.save_plan import SavePlanTool
 from agent.tools.ml_ops.ml.training.check_job_status import CheckJobStatusTool
 from agent.tools.ml_ops.ml.training.create_ml_training_job import CreateMLTrainingJobTool
 from agent.tools.ml_ops.ml.training.create_training_script import CreateTrainingScriptTool
@@ -50,6 +53,9 @@ STATIC_TOOLS = [
     UpdateTrainingDataTool(),
     ListModelVersionsTool(),
     RetrainModelVersionTool(),
+    ListPlansTool(),
+    RunPlanTool(),
+    SavePlanTool(),
 ]
 
 

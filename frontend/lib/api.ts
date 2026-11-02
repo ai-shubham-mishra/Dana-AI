@@ -76,6 +76,26 @@ export async function apiPut<T>(path: string, token: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export async function apiPatchJson<T>(path: string, token: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
+  return (await res.json()) as T;
+}
+
+export async function apiDeleteNoContent(path: string, token: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
+}
+
 export async function apiPost<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",

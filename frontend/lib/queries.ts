@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiDelete, apiGet, apiPost, apiPostJson, apiPut, ApiError } from "./api";
+import { apiDelete, apiDeleteNoContent, apiGet, apiPatchJson, apiPost, apiPostJson, apiPut, ApiError } from "./api";
 import { useAccessToken } from "./auth";
 import type {
   ArchivedDeployment,
@@ -19,6 +19,9 @@ import type {
   ModelDetail,
   ModelSummary,
   PendingApproval,
+  Plan,
+  PlanInput,
+  PlanRunResult,
   RetrainResult,
 } from "./types";
 
@@ -231,6 +234,59 @@ export function useDeleteVersion() {
         token ?? "",
       ),
     onSettled: invalidate,
+  });
+}
+
+export const usePlans = () => useApiQuery<Plan[]>("plans", "/api/v1/plans");
+
+function useInvalidatePlans() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return () => queryClient.invalidateQueries({ queryKey: ["plans", token] });
+}
+
+export function useCreatePlan() {
+  const token = useAccessToken();
+  const invalidate = useInvalidatePlans();
+  return useMutation<Plan, ApiError, PlanInput>({
+    mutationFn: (input) => apiPostJson<Plan>("/api/v1/plans", token ?? "", input),
+    onSettled: invalidate,
+  });
+}
+
+export function useUpdatePlan() {
+  const token = useAccessToken();
+  const invalidate = useInvalidatePlans();
+  return useMutation<Plan, ApiError, { planId: string; changes: Partial<PlanInput> }>({
+    mutationFn: ({ planId, changes }) =>
+      apiPatchJson<Plan>(`/api/v1/plans/${encodeURIComponent(planId)}`, token ?? "", changes),
+    onSettled: invalidate,
+  });
+}
+
+export function useDeletePlan() {
+  const token = useAccessToken();
+  const invalidate = useInvalidatePlans();
+  return useMutation<void, ApiError, string>({
+    mutationFn: (planId) => apiDeleteNoContent(`/api/v1/plans/${encodeURIComponent(planId)}`, token ?? ""),
+    onSettled: invalidate,
+  });
+}
+
+export function useRunPlan() {
+  const token = useAccessToken();
+  const queryClient = useQueryClient();
+  return useMutation<PlanRunResult, ApiError, { planId: string; modelName: string }>({
+    mutationFn: ({ planId, modelName }) =>
+      apiPostJson<PlanRunResult>(`/api/v1/plans/${encodeURIComponent(planId)}/runs`, token ?? "", {
+        model_name: modelName,
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["jobs", token] }),
+        queryClient.invalidateQueries({ queryKey: ["models", token] }),
+      ]);
+    },
   });
 }
 

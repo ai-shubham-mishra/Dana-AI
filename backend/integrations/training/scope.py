@@ -10,6 +10,7 @@ class JobScope:
     user_id: str
     chat_id: str
     actor_email: str | None = None
+    plans: Any = None
 
 
 _scope: ContextVar[JobScope | None] = ContextVar("training_job_scope", default=None)
