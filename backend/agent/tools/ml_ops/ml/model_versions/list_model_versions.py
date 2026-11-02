@@ -41,8 +41,8 @@ class ListModelVersionsTool(BaseTool):
     name: str = LIST_MODEL_VERSIONS_TOOL
     description: str = (
         "List the user's saved models, or the versions of one model with the configuration each version was trained "
-        "with (KPI, channels, controls, period). Call this before retrain_model_version so the user can see the "
-        "configuration that will be reused."
+        "with (KPI, channels, controls, period). Use it to find the model and version the user means before "
+        "retrain_model_version, which shows the saved configuration on its approval card."
     )
 
     def get_input_schema(self) -> type[ToolInput]:

@@ -107,7 +107,7 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - The agent pauses before a gated action and emits an `interrupt` SSE event instead of `done`. The payload lists each action with its `allowed_decisions`.
 - `GET /api/v1/chats/{id}/pending` returns the pending approval, or `null`.
 - `POST /api/v1/chats/{id}/resume` with `{"decisions": [...]}` continues the run. Decision types: `approve`, `edit` (with `edited_action: {name, args}`), `reject` (optional `message`), and `respond` (the user's answer for `ask_user`).
-- `ask_user` accepts only `respond`. `initiate_ml_training` accepts `approve`, `edit`, or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
+- `ask_user` accepts only `respond`. `initiate_ml_training` accepts `approve`, `edit`, or `reject`. `retrain_model_version` accepts `approve` or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
 - Run state is stored in the `agent_checkpoints` and `agent_checkpoint_writes` collections in Mongo, so a pending approval survives a backend restart.
 
 ## Thinking and run progress
@@ -137,7 +137,7 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 
 - Each finished training job is saved as a version of its model. Versions are stored in `model_versions`, and changes are recorded in `model_events` (who did what, and when).
 - `GET /api/v1/models` lists models. `GET /api/v1/models/{id}` returns the versions and the event history.
-- `POST /api/v1/models/{id}/versions/{v}/retrain` queues a new training job with the configuration saved on that version. The Models tab shows that configuration in a confirmation dialog first. The agent's `retrain_model_version` tool needs approval (HITL) before it queues the job.
+- `POST /api/v1/models/{id}/versions/{v}/retrain` queues a new training job with the configuration saved on that version. The Models tab shows that configuration in a confirmation dialog first. The agent's `retrain_model_version` tool asks for approval (HITL) first. The approval card shows the saved configuration of that version, and the job is queued only on approve. Reject starts nothing.
 - `POST /api/v1/models/{id}/versions/{v}/deployments` allocates a local container for that version. It returns 202 while the container starts, then the container is `running` and its health probe reports `live`. It returns 503 when no host port is free.
 - Each container gets its own host port from the provisioning range. The port is leased in Mongo, so two containers cannot share one.
 - `GET /api/v1/deployments` lists containers. `POST /api/v1/deployments/{id}/deallocate` stops and removes a container and releases its port. It returns 409 while the container is still provisioning.
