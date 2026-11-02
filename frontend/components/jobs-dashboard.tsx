@@ -312,11 +312,14 @@ function JobBlade({
   return (
     <aside
       aria-label="Job details"
+      inert={!open}
       className={cn(
         "fixed inset-x-0 bottom-0 z-40 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card shadow-2xl",
+        "transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none",
         "lg:static lg:z-0 lg:w-[26rem] lg:max-h-[calc(100dvh-3rem)] lg:shrink-0 lg:rounded-xl lg:border lg:shadow-sm",
-        "lg:transition-[opacity,transform] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none",
-        open ? "lg:translate-x-0 lg:opacity-100" : "lg:translate-x-6 lg:opacity-0",
+        open
+          ? "translate-y-0 opacity-100 lg:translate-x-0"
+          : "pointer-events-none translate-y-6 opacity-0 lg:translate-x-6 lg:translate-y-0",
       )}
     >
       <header className="flex items-center gap-1 border-b border-border px-4 py-2.5">
