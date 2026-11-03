@@ -253,6 +253,20 @@ class TrainingService:
             {"id": job_id, "org_id": org_id, "user_id": user_id}, JOB_PROJECTION
         )
 
+    async def read_model_file(self, *, org_id: str, user_id: str, job_id: str) -> tuple[str, bytes] | None:
+        doc = await self._db.jobs.find_one(
+            {"id": job_id, "org_id": org_id, "user_id": user_id}, {"_id": 0, "artifact": 1}
+        )
+        artifact = (doc or {}).get("artifact")
+        if not artifact or not artifact.get("blob_path"):
+            return None
+        container = self._blob.get_container_client(artifact.get("blob_container") or self._settings.blob_container)
+        try:
+            blob = await container.download_blob(artifact["blob_path"])
+        except ResourceNotFoundError:
+            return None
+        return artifact.get("name") or MODEL_FILE, await blob.readall()
+
     async def find_latest_job(
         self,
         *,

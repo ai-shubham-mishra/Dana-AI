@@ -2,10 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiDelete, apiDeleteNoContent, apiGet, apiPatchJson, apiPost, apiPostJson, apiPut, ApiError } from "./api";
+import { apiDelete, apiDeleteNoContent, apiDownload, apiGet, apiPatchJson, apiPost, apiPostJson, apiPut, ApiError } from "./api";
 import { useAccessToken } from "./auth";
 import type {
   ArchivedDeployment,
+  ArchivedModel,
   ChatMessage,
   ChatSummary,
   ConnectorPage,
@@ -126,6 +127,25 @@ const DEPLOYMENT_IDLE_POLL_MS = 15_000;
 
 export const useModels = () => useApiQuery<ModelSummary[]>("models", "/api/v1/models");
 
+export const useArchivedModels = () => useApiQuery<ArchivedModel[]>("models-archive", "/api/v1/models/archive");
+
+export function useRestoreModel() {
+  const token = useAccessToken();
+  const invalidate = useInvalidateModelData();
+  return useMutation<ModelDetail, ApiError, string>({
+    mutationFn: (modelId) => apiPost<ModelDetail>(`/api/v1/models/${encodeURIComponent(modelId)}/restore`, token ?? ""),
+    onSettled: invalidate,
+  });
+}
+
+export function useDownloadArchivedModel() {
+  const token = useAccessToken();
+  return useMutation<void, ApiError, { modelId: string; fallbackName: string }>({
+    mutationFn: ({ modelId, fallbackName }) =>
+      apiDownload(`/api/v1/models/${encodeURIComponent(modelId)}/download`, token ?? "", fallbackName),
+  });
+}
+
 export function useModel(modelId: string | null) {
   const token = useAccessToken();
   return useQuery<ModelDetail, ApiError>({
@@ -207,8 +227,10 @@ function useInvalidateModelData() {
   return async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["models", token] }),
+      queryClient.invalidateQueries({ queryKey: ["models-archive", token] }),
       queryClient.invalidateQueries({ queryKey: ["model", token] }),
       queryClient.invalidateQueries({ queryKey: ["deployments", token] }),
+      queryClient.invalidateQueries({ queryKey: ["deployments-archive", token] }),
       queryClient.invalidateQueries({ queryKey: ["jobs", token] }),
     ]);
   };
