@@ -1,0 +1,16 @@
+{
+  "name": "ARM containerApps PUT (accepts create, returns async operation)",
+  "request": {
+    "method": "PUT",
+    "urlPathPattern": "/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.App/containerApps/[^/]+"
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "Content-Type": "application/json",
+      "Azure-AsyncOperation": "{{request.baseUrl}}/azure-async/operations/mmm-op"
+    },
+    "body": "{\"id\": \"{{request.path}}\", \"name\": \"{{request.pathSegments.[7]}}\", \"type\": \"Microsoft.App/containerApps\", \"location\": \"eastus\", \"properties\": {\"provisioningState\": \"InProgress\"}}",
+    "transformers": ["response-template"]
+  }
+}

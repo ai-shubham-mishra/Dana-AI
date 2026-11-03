@@ -1,0 +1,832 @@
+import asyncio
+import json
+import logging
+import shutil
+import sys
+import uuid
+from collections import deque
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
+from typing import Any, NamedTuple
+
+from azure.core.exceptions import ResourceNotFoundError
+
+from config.settings import BACKEND_ROOT, Settings
+from integrations.model_registry.registry import InvalidModelName, ModelNameTaken, normalize_model_name
+from integrations.training.drafts import DRAFT_META_FILE, DraftError, apply_script_edit, draft_dir, sha256_text
+from integrations.training.mmm.dataset import build_dataset, validate_sources
+from integrations.training.mmm.plan import MMMPlan, PlanError
+from integrations.training.mmm.recipe import build_config, dump_config, render_script
+from integrations.training.mmm.request import (
+    DatasetSpec,
+    MMMRequest,
+    load_dataset_spec,
+    validate_request,
+)
+from integrations.training.mmm.run_folder import (
+    MODEL_FILE,
+    RUN_FILES,
+    TRAIN_FILE,
+    missing_outputs,
+    run_file_sizes,
+    write_inputs,
+)
+from integrations.training.mmm.sandbox import STREAM_LINE_LIMIT, SandboxError, run_script, sandbox_env
+from integrations.training.protocol import parse_line
+
+logger = logging.getLogger(__name__)
+
+JOB_KIND = "mmm_training"
+ACTIVE_STATUSES = ("queued", "running")
+MMM_DATA_FILE = "mmm_demo.csv"
+MMM_CONFIG_FILE = "mmm_demo.yaml"
+STDERR_TAIL = 20
+INTERRUPTED = "Training was interrupted by a server shutdown"
+
+
+class Draft(NamedTuple):
+    run_id: str
+    script: str
+    script_sha256: str
+
+
+def run_blob_path(org_id: str, user_id: str, job_id: str, name: str) -> str:
+    return f"models/{org_id}/{user_id}/{job_id}/{name}"
+JOB_PROJECTION = {
+    "_id": 0,
+    "id": 1,
+    "title": 1,
+    "kind": 1,
+    "status": 1,
+    "stage": 1,
+    "percent": 1,
+    "message": 1,
+    "error": 1,
+    "params": 1,
+    "metrics": 1,
+    "artifact": 1,
+    "model_id": 1,
+    "model_version": 1,
+    "created_at": 1,
+    "updated_at": 1,
+}
+
+CommandFactory = Callable[[Path, MMMRequest], list[str]]
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _title(request: MMMRequest) -> str:
+    return f"MMM training · {request.kpi} · {request.date_start} to {request.date_end}"
+
+
+def _params_title(params: dict[str, Any]) -> str:
+    return f"MMM training · {params['kpi']} · {params['date_start']} to {params['date_end']}"
+
+
+async def _drain(stream: asyncio.StreamReader, tail: deque[str]) -> None:
+    async for raw in stream:
+        line = raw.decode("utf-8", "replace").rstrip()
+        if line:
+            tail.append(line)
+
+
+class ArtifactUploadError(RuntimeError):
+    """A run file could not be stored, so the job cannot be reproduced from its storage."""
+
+
+class TrainingService:
+    def __init__(
+        self,
+        *,
+        db: Any,
+        blob: Any,
+        settings: Settings,
+        command_factory: CommandFactory | None = None,
+        connector_pool: Any | None = None,
+        datasets_schema: str = "datasets",
+        model_registry: Any | None = None,
+    ):
+        self._db = db
+        self._blob = blob
+        self._settings = settings
+        self._data_path = settings.training_mmm_dir / MMM_DATA_FILE
+        self._config_path = settings.training_mmm_dir / MMM_CONFIG_FILE
+        self._spec: DatasetSpec = load_dataset_spec(self._config_path)
+        self._command_factory = command_factory or self._mmm_command
+        self._connector_pool = connector_pool
+        self._datasets_schema = datasets_schema
+        self._models = model_registry
+        self._slots = asyncio.Semaphore(1)
+        self._tasks: set[asyncio.Task] = set()
+
+    @property
+    def models(self) -> Any:
+        return self._models
+
+    async def submit_mmm_plan(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        plan: MMMPlan,
+        model_id: str | None = None,
+        model_name: str | None = None,
+        source: str = "train",
+        source_version: int | None = None,
+        actor_email: str | None = None,
+    ) -> str:
+        stored_name = await self._resolve_target(
+            org_id=org_id, user_id=user_id, model_id=model_id, model_name=model_name
+        )
+        await validate_sources(self._connector_pool, self._datasets_schema, plan)
+        job_id = uuid.uuid4().hex
+        await self._insert_job(
+            job_id=job_id,
+            org_id=org_id,
+            user_id=user_id,
+            chat_id=chat_id,
+            params=plan.to_dict(),
+            model_id=model_id,
+            model_name=stored_name,
+            source=source,
+            source_version=source_version,
+            actor_email=actor_email,
+        )
+        task = asyncio.create_task(self._run_plan(job_id, org_id, user_id, plan))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job_id
+
+    async def _resolve_target(
+        self, *, org_id: str, user_id: str, model_id: str | None, model_name: str | None
+    ) -> str | None:
+        if self._connector_pool is None:
+            raise PlanError("connector data is not configured for training")
+        if model_id is None:
+            return await self._check_new_model_name(org_id=org_id, user_id=user_id, raw=model_name)
+        if self._models is None:
+            raise PlanError("model registry is not configured")
+        if await self._models.get_model(org_id=org_id, user_id=user_id, model_id=model_id) is None:
+            raise LookupError(f"model {model_id} was not found")
+        return None
+
+    async def _insert_job(
+        self,
+        *,
+        job_id: str,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        params: dict[str, Any],
+        model_id: str | None,
+        model_name: str | None,
+        source: str,
+        source_version: int | None,
+        actor_email: str | None,
+    ) -> None:
+        now = _now()
+        await self._db.jobs.insert_one(
+            {
+                "id": job_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "title": _params_title(params),
+                "kind": JOB_KIND,
+                "status": "queued",
+                "stage": "queued",
+                "percent": 0,
+                "message": "Waiting for a free training slot",
+                "error": None,
+                "params": params,
+                "metrics": None,
+                "artifact": None,
+                "model_id": model_id,
+                "model_name": model_name,
+                "model_version": None,
+                "source": source,
+                "source_version": source_version,
+                "requested_by_email": actor_email,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        await self._event(job_id, org_id, user_id, "queued", 0, "Waiting for a free training slot")
+
+    async def _check_new_model_name(self, *, org_id: str, user_id: str, raw: str | None) -> str:
+        if self._models is None:
+            raise PlanError("model registry is not configured")
+        try:
+            name = normalize_model_name(raw)
+        except InvalidModelName as exc:
+            raise PlanError(str(exc)) from exc
+        if await self._models.name_taken(org_id=org_id, user_id=user_id, name=name):
+            suggestions = await self._models.suggest_names(org_id=org_id, user_id=user_id, base=name)
+            raise ModelNameTaken(name, suggestions)
+        return name
+
+    async def retrain_version(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        model_id: str,
+        version: int,
+        actor_email: str | None = None,
+    ) -> str:
+        if self._models is None:
+            raise PlanError("model registry is not configured")
+        source = await self._models.get_version(
+            org_id=org_id, user_id=user_id, model_id=model_id, version=version
+        )
+        if source is None:
+            raise LookupError(f"model {model_id} has no version {version}")
+        plan = MMMPlan.model_validate(source["params"])
+        return await self.submit_mmm_plan(
+            org_id=org_id,
+            user_id=user_id,
+            chat_id=chat_id,
+            plan=plan,
+            model_id=model_id,
+            source="retrain",
+            source_version=version,
+            actor_email=actor_email,
+        )
+
+    async def submit(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        model: str,
+        kpi: str,
+        channels: list[str],
+        date_range: str,
+        actor_email: str | None = None,
+    ) -> str:
+        request = validate_request(
+            model=model, kpi=kpi, channels=channels, date_range=date_range, spec=self._spec
+        )
+        job_id = uuid.uuid4().hex
+        now = _now()
+        await self._db.jobs.insert_one(
+            {
+                "id": job_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "requested_by_email": actor_email,
+                "title": _title(request),
+                "kind": JOB_KIND,
+                "status": "queued",
+                "stage": "queued",
+                "percent": 0,
+                "message": "Waiting for a free training slot",
+                "error": None,
+                "params": request.to_dict(),
+                "metrics": None,
+                "artifact": None,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        await self._event(job_id, org_id, user_id, "queued", 0, "Waiting for a free training slot")
+        task = asyncio.create_task(self._run(job_id, org_id, user_id, request))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job_id
+
+    def draft_path(self, org_id: str, user_id: str, chat_id: str, run_id: str) -> Path:
+        return draft_dir(self._settings.training_output_dir, org_id, user_id, chat_id, run_id)
+
+    async def prepare_mmm_draft(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        plan: MMMPlan,
+        model_id: str | None = None,
+        model_name: str | None = None,
+        source: str = "train",
+        source_version: int | None = None,
+        actor_email: str | None = None,
+    ) -> Draft:
+        stored_name = await self._resolve_target(
+            org_id=org_id, user_id=user_id, model_id=model_id, model_name=model_name
+        )
+        await validate_sources(self._connector_pool, self._datasets_schema, plan)
+        dataset = await build_dataset(self._connector_pool, self._datasets_schema, org_id, plan)
+        config = build_config(plan)
+        run_id = uuid.uuid4().hex
+        script = render_script(config, plan.to_dict(), _now().isoformat())
+        run_dir = self.draft_path(org_id, user_id, chat_id, run_id)
+        write_inputs(
+            run_dir,
+            dataset.columns,
+            dataset.rows,
+            dump_config(config),
+            script,
+            {"plan": plan.to_dict(), "dataset": dataset.log},
+        )
+        digest = sha256_text(script)
+        meta = {
+            "run_id": run_id,
+            "model_id": model_id,
+            "model_name": stored_name,
+            "source": source,
+            "kpi": plan.kpi,
+            "date_start": plan.date_start,
+            "date_end": plan.date_end,
+            "rows": len(dataset.rows),
+        }
+        await asyncio.to_thread(
+            (run_dir / DRAFT_META_FILE).write_text, json.dumps(meta, indent=2, default=str), encoding="utf-8"
+        )
+        now = _now()
+        await self._db.training_drafts.insert_one(
+            {
+                "run_id": run_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "status": "ready",
+                "job_id": None,
+                "model_id": model_id,
+                "model_name": stored_name,
+                "source": source,
+                "source_version": source_version,
+                "params": plan.to_dict(),
+                "script_sha256": digest,
+                "requested_by_email": actor_email,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return Draft(run_id, script, digest)
+
+    async def edit_mmm_draft(
+        self, *, org_id: str, user_id: str, chat_id: str, run_id: str, old_text: str, new_text: str
+    ) -> str:
+        doc = await self._require_draft(org_id=org_id, user_id=user_id, chat_id=chat_id, run_id=run_id)
+        if doc["status"] != "ready":
+            raise DraftError(f"draft {run_id} is {doc['status']} and can no longer be edited")
+        script_path = self.draft_path(org_id, user_id, chat_id, run_id) / TRAIN_FILE
+        current = await asyncio.to_thread(script_path.read_text, encoding="utf-8")
+        updated = apply_script_edit(current, old_text, new_text)
+        digest = sha256_text(updated)
+        await asyncio.to_thread(script_path.write_text, updated, encoding="utf-8")
+        await self._db.training_drafts.update_one(
+            {"run_id": run_id, "status": "ready"},
+            {"$set": {"script_sha256": digest, "updated_at": _now()}},
+        )
+        return digest
+
+    async def submit_mmm_draft(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        run_id: str,
+        script_sha256: str,
+        actor_email: str | None = None,
+    ) -> str:
+        doc = await self._require_draft(org_id=org_id, user_id=user_id, chat_id=chat_id, run_id=run_id)
+        if doc["status"] != "ready":
+            raise DraftError(f"draft {run_id} was already {doc['status']}")
+        if doc["script_sha256"] != script_sha256:
+            raise DraftError("the script changed after it was reviewed. Review the current script before submitting.")
+        stored_name = await self._resolve_target(
+            org_id=org_id, user_id=user_id, model_id=doc.get("model_id"), model_name=doc.get("model_name")
+        )
+        job_id = uuid.uuid4().hex
+        claimed = await self._db.training_drafts.update_one(
+            {
+                "run_id": run_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "status": "ready",
+                "script_sha256": script_sha256,
+            },
+            {"$set": {"status": "submitted", "job_id": job_id, "updated_at": _now()}},
+        )
+        if claimed.modified_count == 0:
+            raise DraftError(f"draft {run_id} changed while it was being submitted. Review it again.")
+        try:
+            await self._insert_job(
+                job_id=job_id,
+                org_id=org_id,
+                user_id=user_id,
+                chat_id=chat_id,
+                params=doc["params"],
+                model_id=doc.get("model_id"),
+                model_name=stored_name,
+                source=doc.get("source") or "train",
+                source_version=doc.get("source_version"),
+                actor_email=actor_email,
+            )
+        except Exception:
+            await self._db.training_drafts.update_one(
+                {"run_id": run_id}, {"$set": {"status": "ready", "job_id": None}}
+            )
+            raise
+        task = asyncio.create_task(
+            self._run_draft(job_id, org_id, user_id, chat_id, run_id, script_sha256)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job_id
+
+    async def _require_draft(self, *, org_id: str, user_id: str, chat_id: str, run_id: str) -> dict[str, Any]:
+        doc = await self._db.training_drafts.find_one(
+            {"run_id": run_id, "org_id": org_id, "user_id": user_id, "chat_id": chat_id}, {"_id": 0}
+        )
+        if doc is None:
+            raise LookupError(f"draft {run_id} was not found")
+        return doc
+
+    async def _run_draft(
+        self, job_id: str, org_id: str, user_id: str, chat_id: str, run_id: str, script_sha256: str
+    ) -> None:
+        async with self._slots:
+            await self._supervised(
+                job_id,
+                org_id,
+                user_id,
+                self._copy_and_run_draft(job_id, org_id, user_id, chat_id, run_id, script_sha256),
+            )
+
+    async def _copy_and_run_draft(
+        self, job_id: str, org_id: str, user_id: str, chat_id: str, run_id: str, script_sha256: str
+    ) -> None:
+        await self._update(job_id, status="running", stage="preparing_run", percent=3,
+                           message="Copying the approved script into the run folder")
+        run_dir = self._settings.training_output_dir / job_id
+        await asyncio.to_thread(
+            shutil.copytree, self.draft_path(org_id, user_id, chat_id, run_id), run_dir
+        )
+        copied = await asyncio.to_thread((run_dir / TRAIN_FILE).read_bytes)
+        if sha256(copied).hexdigest() != script_sha256:
+            raise PlanError("the script changed after approval, so the run was not started. Submit it again.")
+        message = "Run folder ready with the approved training script"
+        await self._progress(job_id, org_id, user_id, {"stage": "run_folder", "percent": 5, "message": message})
+        await self._execute_run_folder(job_id, org_id, user_id, run_dir)
+
+    async def get_job(self, *, org_id: str, user_id: str, job_id: str) -> dict[str, Any] | None:
+        return await self._db.jobs.find_one(
+            {"id": job_id, "org_id": org_id, "user_id": user_id}, JOB_PROJECTION
+        )
+
+    async def read_run_file(self, *, org_id: str, user_id: str, job_id: str, name: str) -> bytes | None:
+        container = self._blob.get_container_client(self._settings.blob_container)
+        try:
+            blob = await container.download_blob(run_blob_path(org_id, user_id, job_id, name))
+        except ResourceNotFoundError:
+            return None
+        return await blob.readall()
+
+    async def _store_run_files(self, org_id: str, user_id: str, job_id: str, run_dir: Path) -> list[str]:
+        container = self._blob.get_container_client(self._settings.blob_container)
+        stored: list[str] = []
+        for name in RUN_FILES:
+            path = run_dir / name
+            if name == MODEL_FILE or not path.is_file():
+                continue
+            try:
+                data = await asyncio.to_thread(path.read_bytes)
+                await container.upload_blob(name=run_blob_path(org_id, user_id, job_id, name), data=data, overwrite=True)
+                stored.append(name)
+            except Exception as exc:
+                logger.exception("could not store %s for training job %s", name, job_id)
+                raise ArtifactUploadError(f"could not store {name}: {type(exc).__name__}") from exc
+        return stored
+
+    async def read_model_file(self, *, org_id: str, user_id: str, job_id: str) -> tuple[str, bytes] | None:
+        doc = await self._db.jobs.find_one(
+            {"id": job_id, "org_id": org_id, "user_id": user_id}, {"_id": 0, "artifact": 1}
+        )
+        artifact = (doc or {}).get("artifact")
+        if not artifact or not artifact.get("blob_path"):
+            return None
+        container = self._blob.get_container_client(artifact.get("blob_container") or self._settings.blob_container)
+        try:
+            blob = await container.download_blob(artifact["blob_path"])
+        except ResourceNotFoundError:
+            return None
+        return artifact.get("name") or MODEL_FILE, await blob.readall()
+
+    async def find_latest_job(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        kind: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
+        query: dict[str, Any] = {"org_id": org_id, "user_id": user_id}
+        if kind:
+            query["kind"] = kind
+        if statuses:
+            query["status"] = {"$in": list(statuses)}
+        return await self._db.jobs.find_one(query, JOB_PROJECTION, sort=[("created_at", -1)])
+
+    async def close(self) -> None:
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def delete_jobs(
+        self, *, org_id: str, user_id: str, job_ids: list[str], actor_email: str | None = None
+    ) -> dict[str, Any]:
+        scope = {"org_id": org_id, "user_id": user_id}
+        cursor = self._db.jobs.find({**scope, "id": {"$in": job_ids}}, {"_id": 0, "id": 1, "status": 1, "artifact": 1})
+        found = {doc["id"]: doc async for doc in cursor}
+        deleted: list[str] = []
+        skipped: list[dict[str, str]] = []
+        for job_id in job_ids:
+            doc = found.get(job_id)
+            if doc is None:
+                skipped.append({"id": job_id, "reason": "Job not found"})
+                continue
+            if doc["status"] in ACTIVE_STATUSES:
+                skipped.append({"id": job_id, "reason": "Job is still running"})
+                continue
+            version = None
+            if self._models is not None:
+                version = await self._models.version_for_job(org_id=org_id, user_id=user_id, job_id=job_id)
+            if version and await self._models.blocking_deployment(
+                org_id=org_id, user_id=user_id, model_id=version["model_id"], version=version["version"]
+            ):
+                skipped.append({"id": job_id, "reason": "Model version is deployed; deallocate it first"})
+                continue
+            try:
+                await self._remove_job_files(job_id, doc.get("artifact"))
+            except Exception:
+                logger.exception("Failed to remove files for training job %s", job_id)
+                skipped.append({"id": job_id, "reason": "Files could not be removed; try again"})
+                continue
+            await self._db.job_events.delete_many({"job_id": job_id})
+            await self._db.jobs.delete_one({**scope, "id": job_id})
+            if version:
+                await self._models.delete_version(
+                    org_id=org_id, user_id=user_id, model_id=version["model_id"],
+                    version=version["version"], actor_email=actor_email,
+                )
+            deleted.append(job_id)
+        return {"deleted": deleted, "skipped": skipped}
+
+    async def _remove_job_files(self, job_id: str, artifact: dict[str, Any] | None) -> None:
+        if artifact and artifact.get("blob_path"):
+            container = self._blob.get_container_client(artifact.get("blob_container") or self._settings.blob_container)
+            prefix = artifact["blob_path"].rsplit("/", 1)[0]
+            for name in artifact.get("stored") or [artifact.get("name")]:
+                try:
+                    await container.delete_blob(f"{prefix}/{name}")
+                except ResourceNotFoundError:
+                    pass
+        root = self._settings.training_output_dir.resolve()
+        run_dir = (root / job_id).resolve()
+        if run_dir.parent != root:
+            raise ValueError(f"Refusing to delete run folder outside training output: {run_dir}")
+        if run_dir.exists():
+            await asyncio.to_thread(shutil.rmtree, run_dir)
+
+    def _mmm_command(self, job_dir: Path, request: MMMRequest) -> list[str]:
+        return [
+            sys.executable,
+            "-m",
+            "integrations.training.mmm.cli",
+            "--data",
+            str(self._data_path),
+            "--config",
+            str(self._config_path),
+            "--output-dir",
+            str(job_dir),
+            "--request",
+            json.dumps(request.to_dict()),
+        ]
+
+    async def _run(self, job_id: str, org_id: str, user_id: str, request: MMMRequest) -> None:
+        async with self._slots:
+            proc: asyncio.subprocess.Process | None = None
+            try:
+                await self._update(job_id, status="running", stage="starting", percent=1,
+                                   message="Starting the trainer")
+                job_dir = self._settings.training_output_dir / job_id
+                proc = await asyncio.create_subprocess_exec(
+                    *self._command_factory(job_dir, request),
+                    cwd=str(BACKEND_ROOT),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    limit=STREAM_LINE_LIMIT,
+                )
+                tail: deque[str] = deque(maxlen=STDERR_TAIL)
+                drain = asyncio.create_task(_drain(proc.stderr, tail))
+                result: dict[str, Any] | None = None
+                async for raw in proc.stdout:
+                    parsed = parse_line(raw.decode("utf-8", "replace").rstrip())
+                    if parsed is None:
+                        continue
+                    kind, payload = parsed
+                    if kind == "progress":
+                        await self._progress(job_id, org_id, user_id, payload)
+                    else:
+                        result = payload
+                code = await proc.wait()
+                await drain
+                if code == 0 and result and result.get("status") == "success":
+                    await self._finish(job_id, org_id, user_id, result)
+                else:
+                    message = (result or {}).get("message") or (tail[-1] if tail else "") \
+                        or f"trainer exited with code {code}"
+                    await self._fail(job_id, org_id, user_id, message)
+            except asyncio.CancelledError:
+                if proc is not None and proc.returncode is None:
+                    proc.kill()
+                try:
+                    await self._fail(job_id, org_id, user_id, "Training was interrupted by a server shutdown")
+                except Exception:
+                    logger.exception("could not record interrupted training job %s", job_id)
+                raise
+            except Exception as exc:
+                logger.exception("training job %s crashed", job_id)
+                await self._fail(job_id, org_id, user_id, f"Training failed: {type(exc).__name__}")
+
+    async def _run_plan(self, job_id: str, org_id: str, user_id: str, plan: MMMPlan) -> None:
+        async with self._slots:
+            await self._supervised(job_id, org_id, user_id, self._compile_and_run(job_id, org_id, user_id, plan))
+
+    async def _compile_and_run(self, job_id: str, org_id: str, user_id: str, plan: MMMPlan) -> None:
+        await self._update(job_id, status="running", stage="compiling_data", percent=2,
+                           message="Compiling the dataset from connector tables")
+        dataset = await build_dataset(self._connector_pool, self._datasets_schema, org_id, plan)
+        config = build_config(plan)
+        script = render_script(config, plan.to_dict(), _now().isoformat())
+        run_dir = self._settings.training_output_dir / job_id
+        write_inputs(
+            run_dir,
+            dataset.columns,
+            dataset.rows,
+            dump_config(config),
+            script,
+            {"plan": plan.to_dict(), "dataset": dataset.log},
+        )
+        message = f"Run folder ready with {len(dataset.rows)} rows and the generated training script"
+        await self._progress(job_id, org_id, user_id, {"stage": "run_folder", "percent": 5, "message": message})
+        await self._execute_run_folder(job_id, org_id, user_id, run_dir)
+
+    async def _supervised(self, job_id: str, org_id: str, user_id: str, work: Awaitable[None]) -> None:
+        try:
+            await work
+        except asyncio.CancelledError:
+            try:
+                await self._fail(job_id, org_id, user_id, INTERRUPTED)
+            except Exception:
+                logger.exception("could not record interrupted training job %s", job_id)
+            raise
+        except (PlanError, SandboxError) as exc:
+            await self._fail(job_id, org_id, user_id, str(exc))
+        except Exception as exc:
+            logger.exception("training job %s crashed", job_id)
+            await self._fail(job_id, org_id, user_id, f"Training failed: {type(exc).__name__}")
+
+    async def _execute_run_folder(self, job_id: str, org_id: str, user_id: str, run_dir: Path) -> None:
+        async def on_progress(payload: dict[str, Any]) -> None:
+            await self._progress(job_id, org_id, user_id, payload)
+
+        outcome = await run_script(
+            [sys.executable, str(run_dir / TRAIN_FILE)],
+            run_dir,
+            on_progress,
+            env=sandbox_env(),
+        )
+        result = outcome.result or {}
+        if outcome.code != 0 or result.get("status") != "success":
+            message = result.get("message") or (outcome.tail[-1] if outcome.tail else "") \
+                or f"training script exited with code {outcome.code}"
+            await self._fail(job_id, org_id, user_id, message)
+            return
+        missing = missing_outputs(run_dir)
+        if missing:
+            await self._fail(job_id, org_id, user_id, f"run folder is missing: {', '.join(missing)}")
+            return
+        result = {**result, "model_path": str(run_dir / MODEL_FILE)}
+        if await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)}):
+            await self._record_version(job_id, org_id, user_id)
+
+    async def _progress(self, job_id: str, org_id: str, user_id: str, payload: dict[str, Any]) -> None:
+        stage = str(payload.get("stage", "running"))
+        percent = int(payload.get("percent", 0))
+        message = str(payload.get("message", ""))
+        await self._update(job_id, stage=stage, percent=percent, message=message)
+        await self._event(job_id, org_id, user_id, stage, percent, message)
+
+    async def _finish(
+        self,
+        job_id: str,
+        org_id: str,
+        user_id: str,
+        result: dict[str, Any],
+        extra: dict[str, Any] | None = None,
+    ) -> bool:
+        await self._update(job_id, stage="uploading_artifact", percent=97,
+                           message="Uploading the model artifact")
+        await self._event(job_id, org_id, user_id, "uploading_artifact", 97, "Uploading the model artifact")
+        data = await asyncio.to_thread(Path(result["model_path"]).read_bytes)
+        run_dir = Path(result["model_path"]).parent
+        try:
+            extra_stored = await self._store_run_files(org_id, user_id, job_id, run_dir)
+        except ArtifactUploadError as exc:
+            await self._fail(job_id, org_id, user_id, str(exc))
+            return False
+        blob_path = run_blob_path(org_id, user_id, job_id, MODEL_FILE)
+        container = self._blob.get_container_client(self._settings.blob_container)
+        await container.upload_blob(name=blob_path, data=data, overwrite=True)
+        artifact = {
+            "name": MODEL_FILE,
+            "blob_container": self._settings.blob_container,
+            "blob_path": blob_path,
+            "bytes": len(data),
+            "files": run_file_sizes(run_dir),
+            "stored": [MODEL_FILE, *extra_stored],
+            **(extra or {}),
+        }
+        message = "Model trained and saved"
+        await self._update(job_id, status="succeeded", stage="done", percent=100, message=message,
+                           error=None, metrics=result.get("metrics"), artifact=artifact)
+        await self._event(job_id, org_id, user_id, "done", 100, message)
+        return True
+
+    async def _record_version(self, job_id: str, org_id: str, user_id: str) -> None:
+        if self._models is None:
+            return
+        try:
+            job = await self._db.jobs.find_one(
+                {"id": job_id},
+                {"_id": 0, "params": 1, "metrics": 1, "artifact": 1, "model_id": 1, "model_name": 1,
+                 "source": 1, "source_version": 1, "requested_by_email": 1},
+            )
+            kpi = str((job.get("params") or {}).get("kpi", "model"))
+            version = await self._models.record_version(
+                org_id=org_id,
+                user_id=user_id,
+                job_id=job_id,
+                params=job.get("params") or {},
+                metrics=job.get("metrics"),
+                artifact=job.get("artifact"),
+                actor_email=job.get("requested_by_email"),
+                name=job.get("model_name") or f"MMM · {kpi}",
+                kpi=kpi,
+                model_id=job.get("model_id"),
+                source=job.get("source") or "train",
+                source_version=job.get("source_version"),
+            )
+            await self._update(job_id, model_id=version["model_id"], model_version=version["version"])
+        except Exception as exc:
+            logger.exception("could not record model version for training job %s", job_id)
+            await self._update(
+                job_id, status="failed", stage="failed", message="Training failed",
+                error=f"Trained, but the model version could not be saved: {type(exc).__name__}",
+            )
+
+    async def reconcile(self) -> int:
+        result = await self._db.jobs.update_many(
+            {"status": {"$in": ["queued", "running"]}},
+            {"$set": {"status": "failed", "stage": "failed", "message": "Training failed",
+                      "error": "Training was interrupted by a server restart", "updated_at": _now()}},
+        )
+        if result.modified_count:
+            logger.warning("Marked %d training job(s) interrupted by a restart", result.modified_count)
+        return result.modified_count
+
+    async def _fail(self, job_id: str, org_id: str, user_id: str, message: str) -> None:
+        await self._update(job_id, status="failed", stage="failed", message="Training failed", error=message)
+        await self._event(job_id, org_id, user_id, "failed", 0, message)
+
+    async def _update(self, job_id: str, **fields: Any) -> None:
+        await self._db.jobs.update_one({"id": job_id}, {"$set": {**fields, "updated_at": _now()}})
+
+    async def _event(self, job_id: str, org_id: str, user_id: str, stage: str, percent: int, message: str) -> None:
+        await self._db.job_events.insert_one(
+            {
+                "job_id": job_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "stage": stage,
+                "percent": percent,
+                "message": message,
+                "created_at": _now(),
+            }
+        )

@@ -1,0 +1,27 @@
+{
+  "name": "dana-ai-demos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remotion demo videos for Dana AI features",
+  "type": "module",
+  "scripts": {
+    "capture": "node scripts/capture.mjs",
+    "capture:pitch": "node scripts/capture-pitch.mjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts DanaAiDemo out/dana-ai-demo.mp4",
+    "render:pitch": "remotion render src/index.ts PitchVideo out/dana-ai-pitch.mp4",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.539",
+    "@remotion/google-fonts": "4.0.539",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.539"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "playwright": "1.64.1",
+    "typescript": "5.9.3"
+  }
+}

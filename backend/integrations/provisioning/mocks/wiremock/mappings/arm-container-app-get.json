@@ -1,0 +1,13 @@
+{
+  "name": "ARM containerApps GET (returns provisioned app with ingress fqdn)",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.App/containerApps/[^/]+"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "body": "{\"id\": \"{{request.path}}\", \"name\": \"{{request.pathSegments.[7]}}\", \"type\": \"Microsoft.App/containerApps\", \"location\": \"eastus\", \"properties\": {\"provisioningState\": \"Succeeded\", \"configuration\": {\"ingress\": {\"external\": true, \"fqdn\": \"{{request.pathSegments.[7]}}.mock.eastus.azurecontainerapps.io\"}}}}",
+    "transformers": ["response-template"]
+  }
+}

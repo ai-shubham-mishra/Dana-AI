@@ -1,0 +1,15 @@
+{
+  "name": "ARM async operation poll 2 (Succeeded, resets scenario for the next run)",
+  "scenarioName": "arm-async-operation",
+  "requiredScenarioState": "Polled",
+  "newScenarioState": "Started",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/azure-async/operations/.*"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "Succeeded" }
+  }
+}

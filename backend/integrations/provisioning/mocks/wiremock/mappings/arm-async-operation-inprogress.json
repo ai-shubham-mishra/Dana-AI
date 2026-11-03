@@ -1,0 +1,15 @@
+{
+  "name": "ARM async operation poll 1 (InProgress)",
+  "scenarioName": "arm-async-operation",
+  "requiredScenarioState": "Started",
+  "newScenarioState": "Polled",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/azure-async/operations/.*"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "InProgress" }
+  }
+}
