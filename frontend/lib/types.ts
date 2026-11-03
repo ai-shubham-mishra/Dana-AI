@@ -196,6 +196,7 @@ export type PlanSpec = Record<string, unknown>;
 export type Plan = {
   id: string;
   name: string;
+  slug: string;
   description: string;
   visibility: PlanVisibility;
   content: string;

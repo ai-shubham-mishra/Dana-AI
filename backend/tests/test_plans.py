@@ -1,4 +1,5 @@
 import asyncio
+import functools
 from typing import TypedDict
 
 import pytest
@@ -15,7 +16,7 @@ from agent.tools.ml_ops.ml.plans.save_plan import SavePlanTool
 from agent.tools.registry import STATIC_TOOLS, interrupt_policy
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken
 from integrations.plans.markdown import InvalidPlan, parse_plan_markdown, render_plan_markdown
-from integrations.plans.store import PlanNameTaken, content_to_spec
+from integrations.plans.store import SLUG_MAX, PlanNameTaken, content_to_spec, slugify
 from integrations.training.mmm.plan import PlanError
 from integrations.training.scope import JobScope, bind_scope  # noqa: F401
 from tests.test_api import ORG_A, USER_1, USER_2, auth, client, member, mint, raw_db, settings  # noqa: F401
@@ -56,6 +57,11 @@ PLAN_MD = """# Weekly Revenue
 @pytest.fixture()
 def second_member(raw_db):
     raw_db.memberships.insert_one({"user_id": USER_2, "org_id": ORG_A, "role": "analyst", "status": "active"})
+
+
+def _run(client, fn, *args, **kwargs):
+    """Run an async store call on the app's event loop, where the Motor client is bound."""
+    return client.portal.call(functools.partial(fn, *args, **kwargs))
 
 
 def _create(client, token, name, visibility="private", content=None):
@@ -208,13 +214,59 @@ def test_markdown_plan_reports_readable_errors(text, message):
         parse_plan_markdown(text)
 
 
-def test_slash_plan_is_expanded_only_as_a_leading_command():
-    assert expand_slash_command("look at /plan later") == "look at /plan later"
-    assert expand_slash_command("/planning ahead") == "/planning ahead"
-    directive = expand_slash_command("/plan")
-    assert directive.startswith("The user invoked /plan") and "User message:" not in directive
-    with_text = expand_slash_command("/PLANS  Q3 revenue")
+def test_slash_plan_is_expanded_only_as_a_leading_command(client, member):
+    store = client.app.state.plans
+
+    def expand(text):
+        return _run(client, expand_slash_command, text, store, ORG_A, USER_1)
+
+    assert expand("look at /plan later") == "look at /plan later"
+    assert expand("/planning ahead") == "/planning ahead"
+    directive = expand("/plan")
+    assert "list_plans" in directive and "User message:" not in directive
+    with_text = expand("/PLANS  Q3 revenue")
     assert "list_plans" in with_text and with_text.endswith("User message: Q3 revenue")
+
+
+def test_slugify_is_kebab_case_and_never_empty():
+    assert slugify("Weekly Revenue!") == "weekly-revenue"
+    assert slugify("  Q3 · Ads  ") == "q3-ads"
+    assert slugify("···") == "plan"
+    assert len(slugify("x" * 200)) == SLUG_MAX
+
+
+def test_created_plan_gets_a_slug_and_collisions_get_a_hex_suffix(client, member):
+    first = _create(client, mint(user=USER_1), "Weekly Revenue").json()
+    assert first["slug"] == "weekly-revenue"
+    second = _create(client, mint(user=USER_1), "Weekly-Revenue").json()
+    assert second["slug"].startswith("weekly-revenue-")
+    assert len(second["slug"].rsplit("-", 1)[1]) == 4
+
+
+def test_plan_named_plan_never_takes_a_command_word(client, member):
+    body = _create(client, mint(user=USER_1), "Plan").json()
+    assert body["slug"].startswith("plan-") and body["slug"] not in ("plan", "plans")
+
+
+def test_slug_lookup_prefers_the_callers_own_plan(client, member, second_member, raw_db):
+    store = client.app.state.plans
+    shared = _create(client, mint(user=USER_2), "Shared Revenue", visibility="org").json()
+    mine = _create(client, mint(user=USER_1), "My Revenue").json()
+    raw_db.plans.update_many({"id": {"$in": [shared["id"], mine["id"]]}}, {"$set": {"slug": "revenue"}})
+    found = _run(client, store.find_by_slug, org_id=ORG_A, user_id=USER_1, slug="revenue")
+    assert found["id"] == mine["id"]
+    found_by_other = _run(client, store.find_by_slug, org_id=ORG_A, user_id=USER_2, slug="revenue")
+    assert found_by_other["id"] == shared["id"]
+
+
+def test_slash_slug_runs_that_plan_and_skips_the_picker(client, member):
+    store = client.app.state.plans
+    plan = _create(client, mint(user=USER_1), "Weekly Revenue").json()
+    directive = _run(client, expand_slash_command, "/weekly-revenue Q3 test", store, ORG_A, USER_1)
+    assert plan["id"] in directive and "/weekly-revenue" in directive and "Skip listing" in directive
+    assert directive.endswith("User message: Q3 test")
+    assert _run(client, expand_slash_command, "/no-such-plan hi", store, ORG_A, USER_1) == "/no-such-plan hi"
+    assert _run(client, expand_slash_command, "/weekly-revenue", store, ORG_A, USER_2) == "/weekly-revenue"
 
 
 def test_created_plan_returns_its_markdown_content(client, member):
@@ -409,8 +461,8 @@ def test_list_plans_shows_own_and_org_plans_only():
     )
     out, interrupts = turn(ListPlansTool(), {}, FakeService(plans))
     assert not interrupts
-    assert "- Mine (id mine, private, owner you)" in out
-    assert "- Org (id org, org, owner other@example.com)" in out
+    assert "- Mine (slug /mine, id mine, private, owner you)" in out
+    assert "- Org (slug /org, id org, org, owner other@example.com)" in out
     assert "Theirs" not in out
 
 

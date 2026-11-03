@@ -14,6 +14,8 @@ PLAN_NAME_MAX = 80
 PLAN_NAME_RE = re.compile(r"^\w[\w \-.()·]*$")
 VISIBILITIES = ("private", "org")
 ID_BYTES = 8
+SLUG_MAX = 40
+SLUG_COMMANDS = ("plan", "plans")
 
 
 class PlanNameTaken(Exception):
@@ -53,6 +55,23 @@ def content_to_spec(content: str) -> tuple[str, dict[str, Any]]:
     return render_plan_markdown(spec), spec
 
 
+def slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:SLUG_MAX].strip("-")
+    return slug or "plan"
+
+
+def plan_slug(doc: dict[str, Any]) -> str:
+    return doc.get("slug") or slugify(doc.get("name") or "")
+
+
+def _unique_slug(name: str, taken: set[str]) -> str:
+    base = slugify(name)
+    slug = base
+    while slug in taken or slug in SLUG_COMMANDS:
+        slug = f"{base}-{secrets.token_hex(2)}"
+    return slug
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -72,6 +91,13 @@ class PlanStore:
 
     async def get_visible(self, *, org_id: str, user_id: str, plan_id: str) -> dict[str, Any] | None:
         return await self._db.plans.find_one({**self._visible(org_id, user_id), "id": plan_id}, PLAN_PROJECTION)
+
+    async def find_by_slug(self, *, org_id: str, user_id: str, slug: str) -> dict[str, Any] | None:
+        """Resolve /<slug>. A user's own plan wins over a shared plan with the same slug."""
+        matches = [doc for doc in await self.list_visible(org_id=org_id, user_id=user_id) if plan_slug(doc) == slug]
+        owned = [doc for doc in matches if doc.get("owner_id") == user_id]
+        picked = owned or matches
+        return _public(picked[0]) if picked else None
 
     async def ensure_name_free(self, *, org_id: str, user_id: str, name: str, exclude_id: str | None = None) -> None:
         query: dict[str, Any] = {
@@ -98,6 +124,10 @@ class PlanStore:
         visibility = validate_visibility(visibility)
         content, spec = content_to_spec(content)
         await self.ensure_name_free(org_id=org_id, user_id=user_id, name=name)
+        taken = {
+            plan_slug(doc)
+            async for doc in self._db.plans.find({"org_id": org_id}, {"_id": 0, "name": 1, "slug": 1})
+        }
         now = _now()
         doc = {
             "id": secrets.token_hex(ID_BYTES),
@@ -105,6 +135,7 @@ class PlanStore:
             "owner_id": user_id,
             "owner_email": owner_email,
             "name": name,
+            "slug": _unique_slug(name, taken),
             "description": description.strip(),
             "visibility": visibility,
             "content": content,
@@ -151,4 +182,5 @@ def _public(doc: dict[str, Any]) -> dict[str, Any]:
     public = {key: value for key, value in doc.items() if key not in ("_id", "org_id")}
     if "content" not in public and "spec" in public:
         public["content"] = render_plan_markdown(public["spec"])
+    public["slug"] = plan_slug(public)
     return public

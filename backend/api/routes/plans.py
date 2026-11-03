@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken
 from integrations.plans.markdown import InvalidPlan
-from integrations.plans.store import PlanNameTaken
+from integrations.plans.store import PlanNameTaken, plan_slug
 from integrations.training.mmm.plan import MMMPlan, PlanError
 
 router = APIRouter(prefix="/api/v1")
@@ -34,6 +34,7 @@ class PlanRunRequest(BaseModel):
 class PlanOut(BaseModel):
     id: str
     name: str
+    slug: str
     description: str
     visibility: str
     content: str
@@ -50,7 +51,7 @@ class PlanRunOut(BaseModel):
 
 
 def _plan_out(doc: dict[str, Any], principal: Principal) -> PlanOut:
-    return PlanOut(**doc, is_owner=doc["owner_id"] == principal.user_id)
+    return PlanOut(**{**doc, "slug": plan_slug(doc)}, is_owner=doc["owner_id"] == principal.user_id)
 
 
 def _name_conflict(exc: PlanNameTaken) -> HTTPException:

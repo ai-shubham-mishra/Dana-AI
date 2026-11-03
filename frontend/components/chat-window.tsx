@@ -1,17 +1,18 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, BarChart3, Cable, Circle, CircleCheck, CircleDashed, Loader2, Send, Sparkles, Wrench } from "lucide-react";
 
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
+import { PlanSlashMenu, isSlashCommandWord, slashOptions, slashQuery, type SlashOption } from "@/components/plan-slash-menu";
 import { ReasoningTicker, ThinkingBlock, ToolStatusIcon, splitReply } from "@/components/thinking";
 import { apiGet } from "@/lib/api";
 import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
 import { useChatSelection } from "@/lib/chat-selection";
-import { useChats, useMessages, usePending } from "@/lib/queries";
+import { useChats, useMessages, usePending, usePlans } from "@/lib/queries";
 import type { ChatMessage, Decision, TodoItem } from "@/lib/types";
 
 // carried: a pending chip from before a HITL pause, waiting to be adopted by the resumed run's tool call.
@@ -224,35 +225,96 @@ function Composer({
   onSend: (content: string) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState("");
+  const [active, setActive] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const menuId = useId();
+  const plans = usePlans();
+  const query = slashQuery(draft);
+  const options = query === null ? [] : slashOptions(plans.data ?? [], query);
+  const menuOpen = !disabled && query !== null && !dismissed;
+  const highlighted = Math.min(active, Math.max(options.length - 1, 0));
+
+  function updateDraft(next: string) {
+    setDraft(next);
+    setActive(0);
+    setDismissed(false);
+  }
+
+  function pick(option: SlashOption) {
+    updateDraft(`/${option.slug} `);
+    textareaRef.current?.focus();
+  }
 
   async function submit() {
     const content = draft.trim();
     if (!content || disabled) return;
-    setDraft("");
+    updateDraft("");
     const accepted = await onSend(content);
     if (!accepted) setDraft((current) => current || content);
   }
 
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing) return;
+    if (menuOpen && event.key === "Escape") {
+      event.preventDefault();
+      setDismissed(true);
+      return;
+    }
+    if (menuOpen && options.length > 0) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setActive((highlighted + step + options.length) % options.length);
+        return;
+      }
+      const typed = draft.trim().toLowerCase();
+      const sendsAsIs = typed === `/${options[highlighted].slug}` || isSlashCommandWord(typed);
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !sendsAsIs)) {
+        event.preventDefault();
+        pick(options[highlighted]);
+        return;
+      }
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submit();
+    }
+  }
+
   return (
-    <div className="rounded-2xl border border-border bg-card p-3 shadow-elevated">
+    <div className="relative rounded-2xl border border-border bg-card p-3 shadow-elevated">
+      {menuOpen && (
+        <PlanSlashMenu
+          id={menuId}
+          options={options}
+          activeIndex={highlighted}
+          query={query ?? ""}
+          onHover={setActive}
+          onPick={pick}
+        />
+      )}
       <textarea
+        ref={textareaRef}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
+        onChange={(event) => updateDraft(event.target.value)}
+        onKeyDown={onKeyDown}
         disabled={disabled}
         maxLength={8000}
         rows={2}
         placeholder={placeholder}
         aria-label="Message Dana"
+        aria-autocomplete="list"
+        aria-controls={menuOpen ? menuId : undefined}
+        aria-activedescendant={menuOpen && options.length > 0 ? `${menuId}-${highlighted}` : undefined}
         className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
       />
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-muted-foreground">Enter to send · Shift+Enter for a new line</span>
+        <span className="text-xs text-muted-foreground">
+          {menuOpen
+            ? "↑↓ to choose · Tab or Enter to pick · Esc to close"
+            : "Enter to send · Shift+Enter for a new line · type / for plans"}
+        </span>
         <button
           type="button"
           onClick={() => void submit()}

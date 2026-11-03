@@ -216,7 +216,9 @@ async def send_message(
         scope,
         agent,
         actor_email=principal.email,
-        content=expand_slash_command(body.content),
+        content=await expand_slash_command(
+            body.content, request.app.state.plans, principal.org_id, principal.user_id
+        ),
         timezone=_client_timezone(request),
     )
 
