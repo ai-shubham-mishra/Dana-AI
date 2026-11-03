@@ -1,5 +1,6 @@
 import asyncio
 import functools
+from datetime import date, timedelta
 from typing import TypedDict
 
 import pytest
@@ -17,7 +18,7 @@ from agent.tools.registry import STATIC_TOOLS, interrupt_policy
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken
 from integrations.plans.markdown import InvalidPlan, parse_plan_markdown, render_plan_markdown
 from integrations.plans.store import SLUG_MAX, PlanNameTaken, content_to_spec, slugify
-from integrations.training.mmm.plan import PlanError
+from integrations.training.mmm.plan import MMMPlan, PlanError
 from integrations.training.scope import JobScope, bind_scope  # noqa: F401
 from tests.test_api import ORG_A, USER_1, USER_2, auth, client, member, mint, raw_db, settings  # noqa: F401
 
@@ -264,6 +265,7 @@ def test_slash_slug_runs_that_plan_and_skips_the_picker(client, member):
     plan = _create(client, mint(user=USER_1), "Weekly Revenue").json()
     directive = _run(client, expand_slash_command, "/weekly-revenue Q3 test", store, ORG_A, USER_1)
     assert plan["id"] in directive and "/weekly-revenue" in directive and "Skip listing" in directive
+    assert date.today().isoformat() in directive
     assert directive.endswith("User message: Q3 test")
     assert _run(client, expand_slash_command, "/no-such-plan hi", store, ORG_A, USER_1) == "/no-such-plan hi"
     assert _run(client, expand_slash_command, "/weekly-revenue", store, ORG_A, USER_2) == "/weekly-revenue"
@@ -286,6 +288,14 @@ def test_created_plan_returns_its_markdown_content(client, member):
     assert body["spec"]["kpi"] == "revenue"
 
 
+def test_anchored_plan_keeps_its_window_length_and_ends_on_the_run_date():
+    stored = MMMPlan(**SPEC)
+    plan = stored.anchored_to(date(2026, 11, 3))
+    assert plan.date_end == date(2026, 11, 3)
+    assert plan.date_end - plan.date_start == timedelta(days=365)
+    assert (stored.date_start, stored.date_end) == (date(2024, 1, 1), date(2024, 12, 31))
+
+
 def test_run_creates_a_new_model_from_the_saved_plan(client, member, monkeypatch):
     plan = _create(client, mint(user=USER_1), "Weekly Revenue").json()
     calls = _fake_submit(monkeypatch, client, result="job-42")
@@ -298,6 +308,8 @@ def test_run_creates_a_new_model_from_the_saved_plan(client, member, monkeypatch
     assert call["model_name"] == "Q3 Revenue"
     assert call["source"] == "train"
     assert call["plan"].kpi == "revenue"
+    assert call["plan"].date_end == date.today()
+    assert call["plan"].date_end - call["plan"].date_start == timedelta(days=365)
     assert "model_id" not in call
     assert call["user_id"] == USER_1 and call["org_id"] == ORG_A
 
@@ -497,7 +509,9 @@ def test_run_plan_card_shows_the_saved_configuration_and_creates_a_new_model():
     assert action["allowed_decisions"] == ["approve", "reject"]
     assert action["args"]["model"] == "Q3 Revenue"
     assert action["args"]["plan"] == "Weekly Revenue"
-    assert action["args"]["configuration"] == SPEC
+    assert action["args"]["configuration"]["date_end"] == date.today().isoformat()
+    assert action["args"]["configuration"]["date_start"] == (date.today() - timedelta(days=365)).isoformat()
+    assert action["args"]["configuration"]["kpi"] == SPEC["kpi"]
     assert "always creates a new model" in action["description"]
 
     out, _ = turn(RunPlanTool(), {"plan_id": "plan-1", "model_name": "Q3 Revenue"}, service, {"type": "approve"})
@@ -507,6 +521,8 @@ def test_run_plan_card_shows_the_saved_configuration_and_creates_a_new_model():
     assert submit["model_name"] == "Q3 Revenue"
     assert submit["source"] == "train"
     assert submit["plan"].kpi == "revenue"
+    assert submit["plan"].date_end == date.today()
+    assert submit["plan"].date_end - submit["plan"].date_start == timedelta(days=365)
 
 
 def test_rejecting_a_run_starts_no_job_and_keeps_the_reason():

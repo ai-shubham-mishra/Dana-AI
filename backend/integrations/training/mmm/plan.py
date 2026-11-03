@@ -233,6 +233,11 @@ class MMMPlan(BaseModel):
             _check_override(key, value)
         return self
 
+    def anchored_to(self, run_date: date) -> "MMMPlan":
+        """Keeps the window length and moves it so it ends on the run date."""
+        length = self.date_end - self.date_start
+        return self.model_copy(update={"date_start": run_date - length, "date_end": run_date})
+
     def output_names(self) -> list[str]:
         return [name for source in self.sources for name in source.metrics]
 

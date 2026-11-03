@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -127,7 +127,7 @@ async def run_plan(
     if doc is None:
         raise HTTPException(status_code=404, detail="Plan not found")
     try:
-        plan = MMMPlan(**doc["spec"])
+        plan = MMMPlan(**doc["spec"]).anchored_to(date.today())
     except (ValidationError, PlanError) as exc:
         raise HTTPException(status_code=422, detail=f"the saved plan is invalid: {exc}") from exc
     try:

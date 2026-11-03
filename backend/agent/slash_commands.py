@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from typing import Any
 
 from integrations.plans.store import PLAN_NAME_MAX, SLUG_COMMANDS, PlanStore, plan_slug
@@ -15,9 +16,9 @@ def plan_run_directive(plan: dict[str, Any]) -> str:
     name = str(plan.get("name") or "")[:PLAN_NAME_MAX]
     return (
         f"The user selected the saved plan '{name}' (slug /{plan_slug(plan)}, plan_id {plan.get('id')}). Skip listing "
-        "and picking plans. Ask the user for the name of the new model, ask the training-window question with the "
-        "plan's saved window as the default, then call run_plan with plan_id and model_name. Do not change the plan's "
-        "stored configuration."
+        "and picking plans. Ask the user for the name of the new model, then call run_plan with plan_id and "
+        f"model_name. The run keeps the plan's window length and ends today ({date.today().isoformat()}). "
+        "Do not change the plan's stored configuration."
     )
 
 
