@@ -6,13 +6,13 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 
 from api.main import create_app
 from integrations.deployments.leases import NoPortAvailable, PortLeases
 from integrations.deployments.service import DeploymentBusy, DeploymentService, DeprovisionFailed, VersionAlreadyDeployed
 from integrations.model_registry.registry import ModelRegistry
+from integrations.mongo.client import create_mongo_client
 from tests.test_api import ORG_A, USER_1, auth, member, mint, raw_db, settings, static_secret  # noqa: F401
 
 HEADERS = auth(mint())
@@ -105,7 +105,7 @@ async def wait_idle(service):
 
 def run_with_db(settings, body):
     async def main():
-        client = AsyncIOMotorClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        client = create_mongo_client(settings.mongo_uri)
         try:
             return await body(client[settings.mongo_db])
         finally:
@@ -169,6 +169,26 @@ def test_deallocate_archives_for_seven_days_and_purge_removes_it(settings, tmp_p
         await db.deployments.update_one({"id": created["id"]}, {"$set": {"purge_at": datetime.now(UTC) - timedelta(seconds=1)}})
         assert await service.purge_due() == 1
         assert await db.deployments.count_documents({"id": created["id"]}) == 0
+        await service.close()
+
+    run_with_db(settings, body)
+
+
+def test_archived_timestamps_read_back_timezone_aware(settings, tmp_path):
+    orch = FakeOrchestrator()
+
+    async def body(db):
+        await seed_version(db)
+        service = make_service(db, orch, http=health_client(), logs_dir=tmp_path)
+        created = await service.allocate(org_id=ORG_A, user_id=USER_1, model_id="m1", version=1, actor_email="a@b.c")
+        await wait_idle(service)
+        await service.deallocate(org_id=ORG_A, user_id=USER_1, dep_id=created["id"], actor_email="a@b.c")
+
+        archived = await service.list_archived(org_id=ORG_A, user_id=USER_1)
+        assert archived[0]["purge_at"].tzinfo is not None
+        assert archived[0]["archived_at"].tzinfo is not None
+        remaining = (archived[0]["purge_at"] - datetime.now(UTC)).total_seconds()
+        assert 0 < remaining <= 7 * 86400
         await service.close()
 
     run_with_db(settings, body)
