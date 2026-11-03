@@ -51,6 +51,25 @@ class RetrainResult(BaseModel):
     job_id: str
 
 
+class VersionArtifact(BaseModel):
+    name: str
+    bytes: int
+    stored: bool
+
+
+def _version_artifacts(version: dict[str, Any]) -> list[VersionArtifact]:
+    artifact = version.get("artifact") or {}
+    if not artifact.get("name"):
+        return []
+    stored = set(artifact.get("stored") or [artifact["name"]])
+    files = artifact.get("files") or [{"name": artifact["name"], "bytes": artifact.get("bytes", 0)}]
+    return [
+        VersionArtifact(name=item["name"], bytes=int(item.get("bytes") or 0), stored=item["name"] in stored)
+        for item in files
+        if isinstance(item, dict) and item.get("name")
+    ]
+
+
 class ArchivedVersion(ModelVersion):
     purge_at: datetime | None = None
 
@@ -209,6 +228,42 @@ async def delete_model(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _delete_outcome(result)
+
+
+@router.get("/models/{model_id}/versions/{version}/artifacts", response_model=list[VersionArtifact])
+async def list_version_artifacts(
+    model_id: str, version: int, request: Request, principal: Principal = Depends(get_principal)
+) -> list[VersionArtifact]:
+    doc = await request.app.state.model_registry.get_version(
+        org_id=principal.org_id, user_id=principal.user_id, model_id=model_id, version=version
+    )
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return _version_artifacts(doc)
+
+
+@router.get("/models/{model_id}/versions/{version}/artifacts/{name}")
+async def download_version_artifact(
+    model_id: str, version: int, name: str, request: Request, principal: Principal = Depends(get_principal)
+) -> Response:
+    doc = await request.app.state.model_registry.get_version(
+        org_id=principal.org_id, user_id=principal.user_id, model_id=model_id, version=version
+    )
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    entry = next((item for item in _version_artifacts(doc) if item.name == name), None)
+    if entry is None or not entry.stored:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    data = await request.app.state.training.read_run_file(
+        org_id=principal.org_id, user_id=principal.user_id, job_id=doc["job_id"], name=name
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail="Artifact file is no longer available")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
 
 
 @router.delete("/models/{model_id}/versions/{version}")

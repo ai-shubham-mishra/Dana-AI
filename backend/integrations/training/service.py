@@ -23,7 +23,7 @@ from integrations.training.mmm.request import (
     load_dataset_spec,
     validate_request,
 )
-from integrations.training.mmm.run_folder import missing_outputs, run_file_sizes, write_inputs
+from integrations.training.mmm.run_folder import RUN_FILES, missing_outputs, run_file_sizes, write_inputs
 from integrations.training.mmm.sandbox import STREAM_LINE_LIMIT, SandboxError, run_script, sandbox_env
 from integrations.training.protocol import parse_line
 
@@ -35,6 +35,10 @@ MMM_DATA_FILE = "mmm_demo.csv"
 MMM_CONFIG_FILE = "mmm_demo.yaml"
 MODEL_FILE = "mmm_model.nc"
 STDERR_TAIL = 20
+
+
+def run_blob_path(org_id: str, user_id: str, job_id: str, name: str) -> str:
+    return f"models/{org_id}/{user_id}/{job_id}/{name}"
 JOB_PROJECTION = {
     "_id": 0,
     "id": 1,
@@ -253,6 +257,29 @@ class TrainingService:
             {"id": job_id, "org_id": org_id, "user_id": user_id}, JOB_PROJECTION
         )
 
+    async def read_run_file(self, *, org_id: str, user_id: str, job_id: str, name: str) -> bytes | None:
+        container = self._blob.get_container_client(self._settings.blob_container)
+        try:
+            blob = await container.download_blob(run_blob_path(org_id, user_id, job_id, name))
+        except ResourceNotFoundError:
+            return None
+        return await blob.readall()
+
+    async def _store_run_files(self, org_id: str, user_id: str, job_id: str, run_dir: Path) -> list[str]:
+        container = self._blob.get_container_client(self._settings.blob_container)
+        stored: list[str] = []
+        for name in RUN_FILES:
+            path = run_dir / name
+            if name == MODEL_FILE or not path.is_file():
+                continue
+            try:
+                data = await asyncio.to_thread(path.read_bytes)
+                await container.upload_blob(name=run_blob_path(org_id, user_id, job_id, name), data=data, overwrite=True)
+                stored.append(name)
+            except Exception:
+                logger.exception("could not store %s for training job %s", name, job_id)
+        return stored
+
     async def read_model_file(self, *, org_id: str, user_id: str, job_id: str) -> tuple[str, bytes] | None:
         doc = await self._db.jobs.find_one(
             {"id": job_id, "org_id": org_id, "user_id": user_id}, {"_id": 0, "artifact": 1}
@@ -332,10 +359,12 @@ class TrainingService:
     async def _remove_job_files(self, job_id: str, artifact: dict[str, Any] | None) -> None:
         if artifact and artifact.get("blob_path"):
             container = self._blob.get_container_client(artifact.get("blob_container") or self._settings.blob_container)
-            try:
-                await container.delete_blob(artifact["blob_path"])
-            except ResourceNotFoundError:
-                pass
+            prefix = artifact["blob_path"].rsplit("/", 1)[0]
+            for name in artifact.get("stored") or [artifact.get("name")]:
+                try:
+                    await container.delete_blob(f"{prefix}/{name}")
+                except ResourceNotFoundError:
+                    pass
         root = self._settings.training_output_dir.resolve()
         run_dir = (root / job_id).resolve()
         if run_dir.parent != root:
@@ -479,15 +508,18 @@ class TrainingService:
                            message="Uploading the model artifact")
         await self._event(job_id, org_id, user_id, "uploading_artifact", 97, "Uploading the model artifact")
         data = await asyncio.to_thread(Path(result["model_path"]).read_bytes)
-        blob_path = f"models/{org_id}/{user_id}/{job_id}/{MODEL_FILE}"
+        run_dir = Path(result["model_path"]).parent
+        blob_path = run_blob_path(org_id, user_id, job_id, MODEL_FILE)
         container = self._blob.get_container_client(self._settings.blob_container)
         await container.upload_blob(name=blob_path, data=data, overwrite=True)
+        extra_stored = await self._store_run_files(org_id, user_id, job_id, run_dir)
         artifact = {
             "name": MODEL_FILE,
             "blob_container": self._settings.blob_container,
             "blob_path": blob_path,
             "bytes": len(data),
-            "files": run_file_sizes(Path(result["model_path"]).parent),
+            "files": run_file_sizes(run_dir),
+            "stored": [MODEL_FILE, *extra_stored],
             **(extra or {}),
         }
         message = "Model trained and saved"

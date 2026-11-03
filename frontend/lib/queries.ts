@@ -24,6 +24,7 @@ import type {
   PlanInput,
   PlanRunResult,
   RetrainResult,
+  VersionArtifact,
 } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -143,6 +144,29 @@ export function useDownloadArchivedModel() {
   return useMutation<void, ApiError, { modelId: string; fallbackName: string }>({
     mutationFn: ({ modelId, fallbackName }) =>
       apiDownload(`/api/v1/models/${encodeURIComponent(modelId)}/download`, token ?? "", fallbackName),
+  });
+}
+
+export function useVersionArtifacts(modelId: string, version: number | null) {
+  const token = useAccessToken();
+  return useQuery<VersionArtifact[], ApiError>({
+    queryKey: ["version-artifacts", token, modelId, version],
+    queryFn: () =>
+      apiGet<VersionArtifact[]>(`/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/artifacts`, token),
+    enabled: Boolean(token && version !== null),
+    retry: (failureCount, error) => error.status >= 500 && failureCount < 2,
+  });
+}
+
+export function useDownloadVersionArtifact() {
+  const token = useAccessToken();
+  return useMutation<void, ApiError, { modelId: string; version: number; name: string }>({
+    mutationFn: ({ modelId, version, name }) =>
+      apiDownload(
+        `/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/artifacts/${encodeURIComponent(name)}`,
+        token ?? "",
+        name,
+      ),
   });
 }
 
