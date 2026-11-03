@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 
-import { STATUS_STYLES, isActive, progressTone } from "@/lib/job-status";
+import { STATUS_STYLES, isActive, percentColor, progressFill, progressStageColor } from "@/lib/job-status";
 import type { JobEvent, JobStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -19,10 +19,10 @@ export function JobProgressBar({ percent, status, className }: { percent: number
       className={cn("relative h-1.5 w-full overflow-hidden rounded-full bg-muted", className)}
     >
       <motion.div
-        className={cn("absolute inset-y-0 left-0 overflow-hidden rounded-full transition-colors duration-500", progressTone(status, value))}
-        style={isActive(status) ? { backgroundImage: "linear-gradient(90deg, var(--background), var(--primary))" } : undefined}
+        className="absolute inset-0 overflow-hidden"
+        style={{ background: progressFill(status) }}
         initial={false}
-        animate={{ width: `${value}%` }}
+        animate={{ clipPath: `inset(0 ${100 - value}% 0 0)` }}
         transition={{ type: "spring", stiffness: 120, damping: 24 }}
       >
         {isActive(status) ? (
@@ -47,13 +47,14 @@ export function StatusBadge({ status }: { status: JobStatus }) {
 // Newest update first, so the latest progress sits at the top of the blade.
 export function JobTimeline({ events, status, percent }: { events: JobEvent[]; status: JobStatus; percent: number }) {
   const live = isActive(status);
-  const dot = progressTone(status, percent);
+  const latestDot = progressStageColor(status, percent);
   const newestFirst = events.map((event, index) => ({ event, index })).reverse();
 
   return (
     <ol className="ml-3 space-y-3 border-l border-border pl-4">
       {newestFirst.map(({ event, index }) => {
         const isLatest = index === events.length - 1;
+        const color = isLatest ? latestDot : percentColor(event.percent);
         return (
           <motion.li
             key={`${event.created_at}-${index}`}
@@ -65,16 +66,18 @@ export function JobTimeline({ events, status, percent }: { events: JobEvent[]; s
             <span className="pointer-events-none absolute -left-[21px] top-1.5 flex size-2 items-center justify-center" aria-hidden>
               {isLatest && live ? (
                 <motion.span
-                  className={cn("absolute inline-flex size-2 rounded-full", dot)}
+                  className="absolute inline-flex size-2 rounded-full"
+                  style={{ backgroundColor: color }}
                   animate={{ scale: [1, 2.2, 1], opacity: [0.6, 0, 0.6] }}
                   transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
                 />
               ) : null}
               <span
-                className={cn("relative inline-flex size-2 rounded-full transition-colors duration-500", isLatest ? dot : "bg-muted-foreground/40")}
+                className="relative inline-flex size-2 rounded-full ring-1 ring-inset ring-foreground/15 transition-colors duration-500"
+                style={{ backgroundColor: color }}
               />
             </span>
-            <span className="text-xs tabular-nums text-muted-foreground">{event.percent}%</span>{" "}
+            <span className="mr-1.5 text-[11px] font-medium tabular-nums text-foreground">{event.percent}%</span>
             <span className={cn(isLatest && "font-medium")}>{event.message}</span>
           </motion.li>
         );
