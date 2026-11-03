@@ -5,26 +5,22 @@ import { Globe2, Lock, X } from "lucide-react";
 import { useState } from "react";
 
 import { useCreatePlan, useUpdatePlan } from "@/lib/queries";
-import type { Plan, PlanInput, PlanSpec, PlanVisibility } from "@/lib/types";
+import type { Plan, PlanInput, PlanVisibility } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const SPEC_TEMPLATE: PlanSpec = {
-  kpi: "revenue",
-  channels: ["tv_spend", "search_spend"],
-  controls: [],
-  sources: [
-    {
-      table: "your_table",
-      date_column: "date",
-      metrics: { revenue: "revenue", tv_spend: "tv_spend", search_spend: "search_spend" },
-      filters: {},
-    },
-  ],
-  date_start: "2024-01-01",
-  date_end: "2024-12-31",
-  overrides: {},
-  preparation: { date_features: ["month"] },
-};
+const PLAN_TEMPLATE = `# Weekly revenue
+- KPI: revenue
+- Channels: tv_spend, search_spend
+- Controls: none
+- Window: 2024-01-01 to 2024-12-31
+- Sources:
+  - Table: your_table
+    - Date column: date
+    - Metrics: revenue=revenue; tv_spend=tv_spend; search_spend=search_spend
+- Preparation:
+  - Date features: month
+- Overrides:
+`;
 
 const INPUT_CLASS =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40";
@@ -42,7 +38,7 @@ export function PlanFormDialog({
   const [name, setName] = useState(plan?.name ?? "");
   const [description, setDescription] = useState(plan?.description ?? "");
   const [visibility, setVisibility] = useState<PlanVisibility>(plan?.visibility ?? "private");
-  const [specText, setSpecText] = useState(() => JSON.stringify(plan?.spec ?? SPEC_TEMPLATE, null, 2));
+  const [content, setContent] = useState(() => plan?.content ?? PLAN_TEMPLATE);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const pending = create.isPending || update.isPending;
@@ -54,16 +50,11 @@ export function PlanFormDialog({
       setLocalError("Give the plan a name.");
       return;
     }
-    let spec: PlanSpec;
-    try {
-      const parsed: unknown = JSON.parse(specText);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("The spec must be a JSON object.");
-      spec = parsed as PlanSpec;
-    } catch (error) {
-      setLocalError(`Spec is not valid JSON: ${error instanceof Error ? error.message : "unknown error"}`);
+    if (!content.trim()) {
+      setLocalError("Write the plan in markdown before saving.");
       return;
     }
-    const input: PlanInput = { name: name.trim(), description: description.trim(), visibility, spec };
+    const input: PlanInput = { name: name.trim(), description: description.trim(), visibility, content };
     const onSuccess = () => onOpenChange(false);
     if (plan) {
       update.mutate({ planId: plan.id, changes: input }, { onSuccess });
@@ -143,16 +134,21 @@ export function PlanFormDialog({
             </div>
 
             <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Spec (JSON)</span>
+              <span className="text-xs font-medium text-muted-foreground">Plan (markdown)</span>
               <textarea
-                value={specText}
-                onChange={(event) => setSpecText(event.target.value)}
+                value={content}
+                onChange={(event) => {
+                  setContent(event.target.value);
+                  create.reset();
+                  update.reset();
+                }}
                 spellCheck={false}
                 rows={16}
                 className={cn(INPUT_CLASS, "font-mono text-xs leading-relaxed")}
               />
               <span className="block text-xs text-muted-foreground">
-                Replace <code>your_table</code> and the column names with your connector tables. The server checks the spec when you save.
+                Each line is a <code>- </code> bullet. Sources list one <code>Table:</code> per block, and the server checks the plan when you save.
+                Replace <code>your_table</code> and the column names with your connector tables.
               </span>
             </label>
           </div>

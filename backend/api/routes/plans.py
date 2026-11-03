@@ -6,7 +6,8 @@ from pydantic import BaseModel, ValidationError
 
 from integrations.auth.dependencies import Principal, get_principal
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken
-from integrations.plans.store import InvalidPlan, PlanNameTaken
+from integrations.plans.markdown import InvalidPlan
+from integrations.plans.store import PlanNameTaken, plan_slug
 from integrations.training.mmm.plan import MMMPlan, PlanError
 
 router = APIRouter(prefix="/api/v1")
@@ -16,14 +17,14 @@ class PlanCreate(BaseModel):
     name: str
     description: str = ""
     visibility: str = "private"
-    spec: dict[str, Any]
+    content: str
 
 
 class PlanPatch(BaseModel):
     name: str | None = None
     description: str | None = None
     visibility: str | None = None
-    spec: dict[str, Any] | None = None
+    content: str | None = None
 
 
 class PlanRunRequest(BaseModel):
@@ -33,8 +34,10 @@ class PlanRunRequest(BaseModel):
 class PlanOut(BaseModel):
     id: str
     name: str
+    slug: str
     description: str
     visibility: str
+    content: str
     spec: dict[str, Any]
     owner_id: str
     owner_email: str | None = None
@@ -48,7 +51,7 @@ class PlanRunOut(BaseModel):
 
 
 def _plan_out(doc: dict[str, Any], principal: Principal) -> PlanOut:
-    return PlanOut(**doc, is_owner=doc["owner_id"] == principal.user_id)
+    return PlanOut(**{**doc, "slug": plan_slug(doc)}, is_owner=doc["owner_id"] == principal.user_id)
 
 
 def _name_conflict(exc: PlanNameTaken) -> HTTPException:
@@ -71,7 +74,7 @@ async def create_plan(body: PlanCreate, request: Request, principal: Principal =
             name=body.name,
             description=body.description,
             visibility=body.visibility,
-            spec=body.spec,
+            content=body.content,
         )
     except PlanNameTaken as exc:
         raise _name_conflict(exc) from exc

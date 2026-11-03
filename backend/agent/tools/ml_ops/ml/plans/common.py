@@ -2,6 +2,8 @@ from typing import Any
 
 from langgraph.types import interrupt
 
+from integrations.plans.store import plan_slug
+
 PLAN_DECISIONS = ["approve", "reject"]
 
 
@@ -31,7 +33,7 @@ def describe_plan(doc: dict[str, Any], user_id: str) -> str:
     period = f"{spec.get('date_start', '?')} to {spec.get('date_end', '?')}"
     return "\n".join(
         [
-            f"- {doc.get('name')} (id {doc.get('id')}, {doc.get('visibility')}, owner {owner})",
+            f"- {doc.get('name')} (slug /{plan_slug(doc)}, id {doc.get('id')}, {doc.get('visibility')}, owner {owner})",
             f"  KPI: {spec.get('kpi', '?')}",
             f"  Channels: {channels}",
             f"  Controls: {controls}",

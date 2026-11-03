@@ -1,11 +1,13 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { BookMarked, Globe2, Lock, Pencil, Play, Plus, Search, Trash2, User, Users, X } from "lucide-react";
+import { BookMarked, Eye, Globe2, Info, Lock, Pencil, Play, Plus, Search, Trash2, User, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { PlanDetailsDialog } from "@/components/plan-details-dialog";
 import { PlanFormDialog } from "@/components/plan-form-dialog";
 import { PlanRunDialog } from "@/components/plan-run-dialog";
+import { PlanViewDialog } from "@/components/plan-view-dialog";
 import { Pill } from "@/components/models-ui";
 import { useDeletePlan, usePlans } from "@/lib/queries";
 import type { Plan } from "@/lib/types";
@@ -25,6 +27,8 @@ export function PlansList() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [editor, setEditor] = useState<{ plan: Plan | null } | null>(null);
+  const [viewing, setViewing] = useState<Plan | null>(null);
+  const [details, setDetails] = useState<Plan | null>(null);
   const [running, setRunning] = useState<Plan | null>(null);
   const [deleting, setDeleting] = useState<Plan | null>(null);
 
@@ -131,38 +135,13 @@ export function PlansList() {
               key={plan.id}
               className="group flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold" title={plan.name}>
-                    {plan.name}
-                  </h2>
-                  <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
-                    {plan.description || "No description"}
-                  </p>
-                </div>
-                {plan.is_owner ? (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setEditor({ plan })}
-                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      aria-label={`Edit ${plan.name}`}
-                    >
-                      <Pencil className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deletePlan.reset();
-                        setDeleting(plan);
-                      }}
-                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600"
-                      aria-label={`Delete ${plan.name}`}
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                ) : null}
+              <div className="min-w-0">
+                <h2 className="line-clamp-2 break-words text-base font-semibold leading-snug" title={plan.name}>
+                  {plan.name}
+                </h2>
+                <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
+                  {plan.description || "No description"}
+                </p>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -183,15 +162,60 @@ export function PlansList() {
                 </Pill>
               </div>
 
-              <div className="mt-auto flex justify-end pt-5">
+              <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-5">
                 <button
                   type="button"
                   onClick={() => setRunning(plan)}
-                  className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:border-primary hover:text-primary"
+                  className="inline-flex items-center gap-2 whitespace-nowrap rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:border-primary hover:text-primary"
                 >
                   <Play className="size-4" aria-hidden />
                   Run as new model
                 </button>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setDetails(plan)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`Details for ${plan.name}`}
+                    title="Details"
+                  >
+                    <Info className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewing(plan)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`View ${plan.name}`}
+                    title="View"
+                  >
+                    <Eye className="size-4" />
+                  </button>
+                  {plan.is_owner ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setEditor({ plan })}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label={`Edit ${plan.name}`}
+                        title="Edit"
+                      >
+                        <Pencil className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deletePlan.reset();
+                          setDeleting(plan);
+                        }}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600"
+                        aria-label={`Delete ${plan.name}`}
+                        title="Delete"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </div>
             </li>
           ))}
@@ -199,8 +223,19 @@ export function PlansList() {
       ) : null}
 
       {editor ? <PlanFormDialog plan={editor.plan} onOpenChange={(open) => !open && setEditor(null)} /> : null}
+      {viewing ? (
+        <PlanViewDialog
+          plan={viewing}
+          onOpenChange={(open) => !open && setViewing(null)}
+          onEdit={(plan) => {
+            setViewing(null);
+            setEditor({ plan });
+          }}
+        />
+      ) : null}
 
       {running ? <PlanRunDialog plan={running} onOpenChange={(open) => !open && setRunning(null)} /> : null}
+      {details ? <PlanDetailsDialog plan={details} onOpenChange={(open) => !open && setDetails(null)} /> : null}
 
       {deleting ? (
         <Dialog.Root open onOpenChange={(open) => !open && setDeleting(null)}>

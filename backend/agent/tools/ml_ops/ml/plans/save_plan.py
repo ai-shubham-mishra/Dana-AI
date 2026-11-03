@@ -5,6 +5,7 @@ from pydantic import Field
 
 from agent.tools.base import BaseTool, ToolInput, ToolOutput
 from agent.tools.ml_ops.ml.plans.common import request_plan_approval
+from integrations.plans.markdown import render_plan_markdown
 from integrations.plans.store import InvalidPlan, PlanNameTaken, normalize_plan_name, validate_spec, validate_visibility
 from integrations.training.mmm.plan import PreparationSpec, SourceSpec
 from integrations.training.scope import current_scope
@@ -80,11 +81,11 @@ class SavePlanTool(BaseTool):
                 name=name,
                 description=description,
                 visibility=visibility,
-                spec=spec,
+                content=render_plan_markdown(spec),
             )
         except (PlanNameTaken, InvalidPlan) as exc:
             return ToolOutput(success=False, error=f"The plan was not saved: {exc}")
         return ToolOutput(
-            result=f"Saved plan '{doc['name']}' (id {doc['id']}, {visibility}). It appears on the Plans page and with /plans.",
+            result=f"Saved plan '{doc['name']}' (id {doc['id']}, {visibility}). It appears on the Plans page and with /plan.",
             metadata={"plan_id": doc["id"]},
         )

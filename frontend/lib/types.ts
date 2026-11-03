@@ -196,19 +196,23 @@ export type PlanSpec = Record<string, unknown>;
 export type Plan = {
   id: string;
   name: string;
+  slug: string;
   description: string;
   visibility: PlanVisibility;
+  content: string;
   spec: PlanSpec;
   owner_id: string;
   owner_email: string | null;
   is_owner: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type PlanInput = {
   name: string;
   description: string;
   visibility: PlanVisibility;
-  spec: PlanSpec;
+  content: string;
 };
 
 export type PlanRunResult = { job_id: string };
