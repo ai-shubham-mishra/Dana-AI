@@ -80,6 +80,10 @@ async def _drain(stream: asyncio.StreamReader, tail: deque[str]) -> None:
             tail.append(line)
 
 
+class ArtifactUploadError(RuntimeError):
+    """A run file could not be stored, so the job cannot be reproduced from its storage."""
+
+
 class TrainingService:
     def __init__(
         self,
@@ -276,8 +280,9 @@ class TrainingService:
                 data = await asyncio.to_thread(path.read_bytes)
                 await container.upload_blob(name=run_blob_path(org_id, user_id, job_id, name), data=data, overwrite=True)
                 stored.append(name)
-            except Exception:
+            except Exception as exc:
                 logger.exception("could not store %s for training job %s", name, job_id)
+                raise ArtifactUploadError(f"could not store {name}: {type(exc).__name__}") from exc
         return stored
 
     async def read_model_file(self, *, org_id: str, user_id: str, job_id: str) -> tuple[str, bytes] | None:
@@ -475,8 +480,8 @@ class TrainingService:
                                      f"run folder is missing: {', '.join(missing)}")
                     return
                 result = {**result, "model_path": str(run_dir / MODEL_FILE)}
-                await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)})
-                await self._record_version(job_id, org_id, user_id)
+                if await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)}):
+                    await self._record_version(job_id, org_id, user_id)
             except asyncio.CancelledError:
                 try:
                     await self._fail(job_id, org_id, user_id, "Training was interrupted by a server shutdown")
@@ -503,16 +508,20 @@ class TrainingService:
         user_id: str,
         result: dict[str, Any],
         extra: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         await self._update(job_id, stage="uploading_artifact", percent=97,
                            message="Uploading the model artifact")
         await self._event(job_id, org_id, user_id, "uploading_artifact", 97, "Uploading the model artifact")
         data = await asyncio.to_thread(Path(result["model_path"]).read_bytes)
         run_dir = Path(result["model_path"]).parent
+        try:
+            extra_stored = await self._store_run_files(org_id, user_id, job_id, run_dir)
+        except ArtifactUploadError as exc:
+            await self._fail(job_id, org_id, user_id, str(exc))
+            return False
         blob_path = run_blob_path(org_id, user_id, job_id, MODEL_FILE)
         container = self._blob.get_container_client(self._settings.blob_container)
         await container.upload_blob(name=blob_path, data=data, overwrite=True)
-        extra_stored = await self._store_run_files(org_id, user_id, job_id, run_dir)
         artifact = {
             "name": MODEL_FILE,
             "blob_container": self._settings.blob_container,
@@ -526,6 +535,7 @@ class TrainingService:
         await self._update(job_id, status="succeeded", stage="done", percent=100, message=message,
                            error=None, metrics=result.get("metrics"), artifact=artifact)
         await self._event(job_id, org_id, user_id, "done", 100, message)
+        return True
 
     async def _record_version(self, job_id: str, org_id: str, user_id: str) -> None:
         if self._models is None:
