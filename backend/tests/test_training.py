@@ -182,6 +182,128 @@ def test_store_run_files_uploads_present_run_files_under_the_job(tmp_path):
     }
 
 
+def test_plan_run_stores_every_run_file_end_to_end(raw_db, member, tmp_path, monkeypatch):
+    from integrations.training import service as training_service
+    from integrations.training.mmm.dataset import DatasetResult
+    from integrations.training.mmm.run_folder import RUN_FILES
+    from integrations.training.mmm.sandbox import SandboxOutcome
+    from tests.test_mmm_run import make_plan
+
+    async def fake_validate(pool, schema, plan):
+        return None
+
+    async def fake_build(pool, schema, org_id, plan):
+        return DatasetResult(columns=["date", "revenue"], rows=[{"date": "2024-01-01", "revenue": 1.0}],
+                             log={"rows_kept": 1})
+
+    async def fake_run_script(command, run_dir, on_progress, env=None):
+        (run_dir / "evaluation.json").write_text("{}", encoding="utf-8")
+        (run_dir / "mmm_model.nc").write_bytes(b"fake-model")
+        return SandboxOutcome(code=0, result={"status": "success", "metrics": {"divergences": 0}}, tail=[])
+
+    monkeypatch.setattr(training_service, "validate_sources", fake_validate)
+    monkeypatch.setattr(training_service, "build_dataset", fake_build)
+    monkeypatch.setattr(training_service, "run_script", fake_run_script)
+
+    with make_client("ok", tmp_path) as client:
+        svc = client.app.state.training
+        svc._connector_pool = object()
+
+        async def fake_name_check(**kwargs):
+            return "Plan Model"
+
+        monkeypatch.setattr(svc, "_check_new_model_name", fake_name_check)
+        job_id = client.portal.call(functools.partial(
+            svc.submit_mmm_plan, org_id=ORG_A, user_id=USER_1, chat_id="chat-1",
+            plan=make_plan(), model_name="Plan Model",
+        ))
+        body = wait_for(client, job_id)
+        assert body["status"] == "succeeded", body
+
+        stored = raw_db.jobs.find_one({"id": job_id})["artifact"]["stored"]
+        assert sorted(stored) == sorted(RUN_FILES)
+        for name in RUN_FILES:
+            data = client.portal.call(functools.partial(
+                svc.read_run_file, org_id=ORG_A, user_id=USER_1, job_id=job_id, name=name,
+            ))
+            assert data is not None, name
+
+
+def test_store_run_files_raises_naming_the_file_that_failed(tmp_path):
+    import asyncio
+    import types
+
+    import pytest
+
+    from integrations.training.service import ArtifactUploadError, TrainingService
+
+    class Container:
+        async def upload_blob(self, name, data, overwrite):
+            if name.endswith("config.yml"):
+                raise OSError("network reset")
+
+    stub = types.SimpleNamespace(
+        _blob=types.SimpleNamespace(get_container_client=lambda name: Container()),
+        _settings=types.SimpleNamespace(blob_container="c"),
+    )
+    (tmp_path / "config.yml").write_text("a: 1", encoding="utf-8")
+    with pytest.raises(ArtifactUploadError, match="could not store config.yml"):
+        asyncio.run(TrainingService._store_run_files(stub, "org", "user", "job-9", tmp_path))
+
+
+def test_plan_run_fails_and_records_no_version_when_a_run_file_upload_fails(raw_db, member, tmp_path, monkeypatch):
+    from integrations.training import service as training_service
+    from integrations.training.mmm.dataset import DatasetResult
+    from integrations.training.mmm.sandbox import SandboxOutcome
+    from tests.test_mmm_run import make_plan
+
+    async def fake_validate(pool, schema, plan):
+        return None
+
+    async def fake_build(pool, schema, org_id, plan):
+        return DatasetResult(columns=["date", "revenue"], rows=[{"date": "2024-01-01", "revenue": 1.0}],
+                             log={"rows_kept": 1})
+
+    async def fake_run_script(command, run_dir, on_progress, env=None):
+        (run_dir / "evaluation.json").write_text("{}", encoding="utf-8")
+        (run_dir / "mmm_model.nc").write_bytes(b"fake-model")
+        return SandboxOutcome(code=0, result={"status": "success", "metrics": {}}, tail=[])
+
+    class FailingContainer:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def upload_blob(self, name, data, overwrite):
+            if name.endswith("dataset.csv"):
+                raise OSError("network reset")
+            return await self._inner.upload_blob(name=name, data=data, overwrite=overwrite)
+
+    monkeypatch.setattr(training_service, "validate_sources", fake_validate)
+    monkeypatch.setattr(training_service, "build_dataset", fake_build)
+    monkeypatch.setattr(training_service, "run_script", fake_run_script)
+
+    with make_client("ok", tmp_path) as client:
+        svc = client.app.state.training
+        svc._connector_pool = object()
+        real_container = svc._blob.get_container_client
+        monkeypatch.setattr(svc._blob, "get_container_client",
+                            lambda name: FailingContainer(real_container(name)))
+
+        async def fake_name_check(**kwargs):
+            return "Plan Model"
+
+        monkeypatch.setattr(svc, "_check_new_model_name", fake_name_check)
+        job_id = client.portal.call(functools.partial(
+            svc.submit_mmm_plan, org_id=ORG_A, user_id=USER_1, chat_id="chat-1",
+            plan=make_plan(), model_name="Plan Model",
+        ))
+        body = wait_for(client, job_id)
+        assert body["status"] == "failed", body
+        assert "could not store dataset.csv" in body["error"]
+        assert raw_db.jobs.find_one({"id": job_id})["artifact"] is None
+        assert raw_db.model_versions.count_documents({"job_id": job_id}) == 0
+
+
 def test_failed_job_records_the_trainer_error(raw_db, member, tmp_path):
     with make_client("fail", tmp_path) as client:
         job_id = submit(client)
