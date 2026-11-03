@@ -51,7 +51,7 @@ export function JobTimeline({ events, status, percent }: { events: JobEvent[]; s
   const newestFirst = events.map((event, index) => ({ event, index })).reverse();
 
   return (
-    <ol className="ml-2 space-y-3 border-l border-border pl-4">
+    <ol className="ml-3 space-y-3 border-l border-border pl-4">
       {newestFirst.map(({ event, index }) => {
         const isLatest = index === events.length - 1;
         return (
@@ -62,7 +62,7 @@ export function JobTimeline({ events, status, percent }: { events: JobEvent[]; s
             transition={{ duration: 0.35, ease: "easeOut" }}
             className={cn("relative text-sm", !isLatest && "text-muted-foreground")}
           >
-            <span className="absolute -left-[21px] top-1.5 flex size-2 items-center justify-center" aria-hidden>
+            <span className="pointer-events-none absolute -left-[21px] top-1.5 flex size-2 items-center justify-center" aria-hidden>
               {isLatest && live ? (
                 <motion.span
                   className={cn("absolute inline-flex size-2 rounded-full", dot)}
