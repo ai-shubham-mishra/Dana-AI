@@ -5,7 +5,7 @@ SERVER_SELECTION_TIMEOUT_MS = 5000
 
 
 def create_mongo_client(uri: str) -> AsyncIOMotorClient:
-    return AsyncIOMotorClient(uri, serverSelectionTimeoutMS=SERVER_SELECTION_TIMEOUT_MS)
+    return AsyncIOMotorClient(uri, serverSelectionTimeoutMS=SERVER_SELECTION_TIMEOUT_MS, tz_aware=True)
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
