@@ -135,56 +135,13 @@ export function PlansList() {
               key={plan.id}
               className="group flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold" title={plan.name}>
-                    {plan.name}
-                  </h2>
-                  <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
-                    {plan.description || "No description"}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setDetails(plan)}
-                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label={`Details for ${plan.name}`}
-                  >
-                    <Info className="size-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewing(plan)}
-                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label={`View ${plan.name}`}
-                  >
-                    <Eye className="size-4" />
-                  </button>
-                  {plan.is_owner ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setEditor({ plan })}
-                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label={`Edit ${plan.name}`}
-                      >
-                        <Pencil className="size-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          deletePlan.reset();
-                          setDeleting(plan);
-                        }}
-                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600"
-                        aria-label={`Delete ${plan.name}`}
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </>
-                  ) : null}
-                </div>
+              <div className="min-w-0">
+                <h2 className="line-clamp-2 break-words text-base font-semibold leading-snug" title={plan.name}>
+                  {plan.name}
+                </h2>
+                <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
+                  {plan.description || "No description"}
+                </p>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -205,15 +162,60 @@ export function PlansList() {
                 </Pill>
               </div>
 
-              <div className="mt-auto flex justify-end pt-5">
+              <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-5">
                 <button
                   type="button"
                   onClick={() => setRunning(plan)}
-                  className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:border-primary hover:text-primary"
+                  className="inline-flex items-center gap-2 whitespace-nowrap rounded-md border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:border-primary hover:text-primary"
                 >
                   <Play className="size-4" aria-hidden />
                   Run as new model
                 </button>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setDetails(plan)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`Details for ${plan.name}`}
+                    title="Details"
+                  >
+                    <Info className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewing(plan)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`View ${plan.name}`}
+                    title="View"
+                  >
+                    <Eye className="size-4" />
+                  </button>
+                  {plan.is_owner ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setEditor({ plan })}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label={`Edit ${plan.name}`}
+                        title="Edit"
+                      >
+                        <Pencil className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deletePlan.reset();
+                          setDeleting(plan);
+                        }}
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600"
+                        aria-label={`Delete ${plan.name}`}
+                        title="Delete"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </div>
             </li>
           ))}

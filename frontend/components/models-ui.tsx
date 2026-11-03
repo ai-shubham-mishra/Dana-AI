@@ -12,7 +12,7 @@ export const HEALTH_STYLE: Record<string, string> = {
 
 export function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset", tone)}>
+    <span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset", tone)}>
       {children}
     </span>
   );

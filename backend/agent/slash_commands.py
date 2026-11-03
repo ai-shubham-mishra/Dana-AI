@@ -4,6 +4,7 @@ from typing import Any
 from integrations.plans.store import PLAN_NAME_MAX, SLUG_COMMANDS, PlanStore, plan_slug
 
 SLASH_COMMAND_RE = re.compile(r"^/([a-z0-9][a-z0-9-]*)(?=\s|$)\s*(.*)$", re.DOTALL | re.IGNORECASE)
+RUN_PLAN_RE = re.compile(r"^run the plan\s+/?([a-z0-9][a-z0-9-]*)(?=\s|$)\s*(.*)$", re.DOTALL | re.IGNORECASE)
 PLANS_LIST_DIRECTIVE = (
     "The user invoked /plans. Call list_plans and show the saved plans, each with its slug as /<slug>, KPI, channels "
     "and period. Do not start a run; the user picks a plan next."
@@ -21,12 +22,14 @@ def plan_run_directive(plan: dict[str, Any]) -> str:
 
 
 async def expand_slash_command(text: str, plans: PlanStore | None, org_id: str, user_id: str) -> str:
-    """Turn /plans or /<plan-slug> into an instruction for the agent. Other text is returned unchanged."""
-    match = SLASH_COMMAND_RE.match((text or "").strip())
+    """Turn /plans, /<plan-slug> or 'run the plan <slug>' into an instruction for the agent. Other text is unchanged."""
+    stripped = (text or "").strip()
+    slash = SLASH_COMMAND_RE.match(stripped)
+    match = slash or RUN_PLAN_RE.match(stripped)
     if match is None:
         return text
     command, rest = match.group(1).lower(), match.group(2).strip()
-    if command in SLUG_COMMANDS:
+    if slash and command in SLUG_COMMANDS:
         directive = PLANS_LIST_DIRECTIVE
     else:
         if plans is None:

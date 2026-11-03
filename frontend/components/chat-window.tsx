@@ -243,9 +243,15 @@ function Composer({
     setDismissed(false);
   }
 
-  function pick(option: SlashOption) {
+  function fill(option: SlashOption) {
     updateDraft(`/${option.slug} `);
     textareaRef.current?.focus();
+  }
+
+  async function runPlan(option: SlashOption) {
+    updateDraft("");
+    const accepted = await onSend(`run the plan ${option.slug}`);
+    if (!accepted) setDraft(`/${option.slug}`);
   }
 
   async function submit() {
@@ -270,9 +276,14 @@ function Composer({
         setActive((highlighted + step + options.length) % options.length);
         return;
       }
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+      if (event.key === "Tab") {
         event.preventDefault();
-        pick(options[highlighted]);
+        fill(options[highlighted]);
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void runPlan(options[highlighted]);
         return;
       }
     }
@@ -292,7 +303,7 @@ function Composer({
           query={query ?? ""}
           totalPlans={plans.data?.length ?? 0}
           onHover={setActive}
-          onPick={pick}
+          onPick={runPlan}
           onPreview={setPreview}
         />
       )}
@@ -315,7 +326,7 @@ function Composer({
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs text-muted-foreground">
           {menuOpen
-            ? "↑↓ to choose · Tab or Enter to pick · Esc to close"
+            ? "↑↓ to choose · Enter to run · Tab to fill · Esc to close"
             : "Enter to send · Shift+Enter for a new line · type / for plans"}
         </span>
         <button

@@ -269,6 +269,17 @@ def test_slash_slug_runs_that_plan_and_skips_the_picker(client, member):
     assert _run(client, expand_slash_command, "/weekly-revenue", store, ORG_A, USER_2) == "/weekly-revenue"
 
 
+def test_run_the_plan_text_from_the_picker_expands_like_the_slash_command(client, member):
+    store = client.app.state.plans
+    plan = _create(client, mint(user=USER_1), "Weekly Revenue").json()
+    directive = _run(client, expand_slash_command, "run the plan weekly-revenue", store, ORG_A, USER_1)
+    assert plan["id"] in directive and "Skip listing" in directive and "User message:" not in directive
+    assert _run(client, expand_slash_command, "run the plan no-such-plan", store, ORG_A, USER_1) == "run the plan no-such-plan"
+    assert _run(client, expand_slash_command, "please run the plan weekly-revenue", store, ORG_A, USER_1) == (
+        "please run the plan weekly-revenue"
+    )
+
+
 def test_created_plan_returns_its_markdown_content(client, member):
     body = _create(client, mint(user=USER_1), "Weekly Revenue").json()
     assert "KPI: revenue" in body["content"]
