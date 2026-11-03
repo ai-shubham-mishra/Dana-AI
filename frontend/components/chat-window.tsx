@@ -6,7 +6,7 @@ import { ArrowDown, BarChart3, Cable, Circle, CircleCheck, CircleDashed, Loader2
 
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
-import { PlanSlashMenu, isSlashCommandWord, slashOptions, slashQuery, type SlashOption } from "@/components/plan-slash-menu";
+import { PlanSlashMenu, slashOptions, slashQuery, type SlashOption } from "@/components/plan-slash-menu";
 import { ReasoningTicker, ThinkingBlock, ToolStatusIcon, splitReply } from "@/components/thinking";
 import { apiGet } from "@/lib/api";
 import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "@/lib/chat";
@@ -269,8 +269,8 @@ function Composer({
         return;
       }
       const typed = draft.trim().toLowerCase();
-      const sendsAsIs = typed === `/${options[highlighted].slug}` || isSlashCommandWord(typed);
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !sendsAsIs)) {
+      const exactSlug = (plans.data ?? []).some((plan) => typed === `/${plan.slug}`);
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !exactSlug)) {
         event.preventDefault();
         pick(options[highlighted]);
         return;
@@ -290,6 +290,7 @@ function Composer({
           options={options}
           activeIndex={highlighted}
           query={query ?? ""}
+          totalPlans={plans.data?.length ?? 0}
           onHover={setActive}
           onPick={pick}
         />

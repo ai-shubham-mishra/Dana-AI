@@ -1,9 +1,10 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { BookMarked, Eye, Globe2, Lock, Pencil, Play, Plus, Search, Trash2, User, Users, X } from "lucide-react";
+import { BookMarked, Eye, Globe2, Info, Lock, Pencil, Play, Plus, Search, Trash2, User, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { PlanDetailsDialog } from "@/components/plan-details-dialog";
 import { PlanFormDialog } from "@/components/plan-form-dialog";
 import { PlanRunDialog } from "@/components/plan-run-dialog";
 import { PlanViewDialog } from "@/components/plan-view-dialog";
@@ -27,6 +28,7 @@ export function PlansList() {
   const [filter, setFilter] = useState<Filter>("all");
   const [editor, setEditor] = useState<{ plan: Plan | null } | null>(null);
   const [viewing, setViewing] = useState<Plan | null>(null);
+  const [details, setDetails] = useState<Plan | null>(null);
   const [running, setRunning] = useState<Plan | null>(null);
   const [deleting, setDeleting] = useState<Plan | null>(null);
 
@@ -135,14 +137,30 @@ export function PlansList() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold" title={plan.name}>
-                    {plan.name}
-                  </h2>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h2 className="truncate text-base font-semibold" title={plan.name}>
+                      {plan.name}
+                    </h2>
+                    <span
+                      className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                      title="Slug for the / picker in chat"
+                    >
+                      /{plan.slug}
+                    </span>
+                  </div>
                   <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
                     {plan.description || "No description"}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setDetails(plan)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`Details for ${plan.name}`}
+                  >
+                    <Info className="size-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setViewing(plan)}
@@ -223,6 +241,7 @@ export function PlansList() {
       ) : null}
 
       {running ? <PlanRunDialog plan={running} onOpenChange={(open) => !open && setRunning(null)} /> : null}
+      {details ? <PlanDetailsDialog plan={details} onOpenChange={(open) => !open && setDetails(null)} /> : null}
 
       {deleting ? (
         <Dialog.Root open onOpenChange={(open) => !open && setDeleting(null)}>

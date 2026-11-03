@@ -204,6 +204,8 @@ export type Plan = {
   owner_id: string;
   owner_email: string | null;
   is_owner: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type PlanInput = {

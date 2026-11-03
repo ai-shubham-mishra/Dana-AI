@@ -3,8 +3,7 @@
 import type { Plan } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const LIST_COMMAND = "plans";
-const COMMAND_WORDS = ["/plan", "/plans"];
+const CATALOG_WORD = "plans";
 
 export type SlashOption = {
   key: string;
@@ -18,38 +17,22 @@ export function slashQuery(draft: string): string | null {
   return /^\/[a-z0-9-]*$/i.test(draft) ? draft.slice(1).toLowerCase() : null;
 }
 
-export function isSlashCommandWord(draft: string): boolean {
-  return COMMAND_WORDS.includes(draft.trim().toLowerCase());
-}
-
+// Typing a prefix of "plans" (including "/" alone) lists every plan, like DeepAgent's /workflow typeahead; other text filters.
 export function slashOptions(plans: Plan[], query: string): SlashOption[] {
-  const options: SlashOption[] = [];
-  if (LIST_COMMAND.startsWith(query)) {
-    options.push({
-      key: "list",
-      slug: LIST_COMMAND,
-      name: "List all plans",
-      detail: "Show every saved plan in the chat",
-      badge: null,
+  const showAll = CATALOG_WORD.startsWith(query);
+  return plans
+    .filter((plan) => showAll || plan.slug.includes(query) || plan.name.toLowerCase().includes(query))
+    .map((plan) => {
+      const kpi = typeof plan.spec.kpi === "string" ? plan.spec.kpi : "";
+      const channels = Array.isArray(plan.spec.channels) ? plan.spec.channels.join(", ") : "";
+      return {
+        key: plan.id,
+        slug: plan.slug,
+        name: plan.name,
+        detail: [kpi && `KPI ${kpi}`, channels].filter(Boolean).join(" · "),
+        badge: plan.is_owner ? (plan.visibility === "org" ? "Shared" : "Private") : `By ${plan.owner_email ?? "a teammate"}`,
+      };
     });
-  }
-  for (const plan of plans) {
-    if (query && !plan.slug.includes(query) && !plan.name.toLowerCase().includes(query)) continue;
-    const kpi = typeof plan.spec.kpi === "string" ? plan.spec.kpi : "";
-    const channels = Array.isArray(plan.spec.channels) ? plan.spec.channels.join(", ") : "";
-    options.push({
-      key: plan.id,
-      slug: plan.slug,
-      name: plan.name,
-      detail: [kpi && `KPI ${kpi}`, channels].filter(Boolean).join(" · "),
-      badge: plan.is_owner
-        ? plan.visibility === "org"
-          ? "Shared"
-          : "Private"
-        : `By ${plan.owner_email ?? "a teammate"}`,
-    });
-  }
-  return options;
 }
 
 export function PlanSlashMenu({
@@ -57,6 +40,7 @@ export function PlanSlashMenu({
   options,
   activeIndex,
   query,
+  totalPlans,
   onHover,
   onPick,
 }: {
@@ -64,6 +48,7 @@ export function PlanSlashMenu({
   options: SlashOption[];
   activeIndex: number;
   query: string;
+  totalPlans: number;
   onHover: (index: number) => void;
   onPick: (option: SlashOption) => void;
 }) {
@@ -71,12 +56,14 @@ export function PlanSlashMenu({
     <div
       id={id}
       role="listbox"
-      aria-label="Commands and saved plans"
+      aria-label="Saved plans"
       className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-card p-1.5 shadow-elevated"
     >
       {options.length === 0 ? (
         <p className="px-3 py-2 text-sm text-muted-foreground">
-          No command or plan matches /{query}. Create plans on the Plans page.
+          {totalPlans === 0
+            ? "No plans saved yet. Create one on the Plans page."
+            : `No plan matches /${query}.`}
         </p>
       ) : (
         options.map((option, index) => (
