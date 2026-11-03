@@ -130,6 +130,12 @@ export type ModelVersion = {
   created_at: string;
 };
 
+export type VersionArtifact = {
+  name: string;
+  bytes: number;
+  stored: boolean;
+};
+
 export type ModelEvent = {
   action: string;
   version: number | null;

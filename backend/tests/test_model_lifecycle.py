@@ -193,6 +193,58 @@ def test_download_zips_the_model_file_and_manifest_for_archived_models_only(api,
     assert manifest["versions"][0]["params"] == {}
 
 
+def test_version_artifacts_list_marks_stored_files_and_falls_back_for_legacy_versions(api, raw_db):
+    _seed_sync(raw_db)
+    raw_db.model_versions.update_one(
+        {"model_id": "m1", "version": 1},
+        {"$set": {"artifact": {
+            "name": "mmm_model.nc", "bytes": 10, "blob_path": "models/o/u/job-1/mmm_model.nc",
+            "files": [{"name": "mmm_model.nc", "bytes": 10}, {"name": "config.yml", "bytes": 4}],
+            "stored": ["mmm_model.nc", "config.yml"],
+        }}},
+    )
+    listing = api.get("/api/v1/models/m1/versions/1/artifacts", headers=HEADERS)
+    assert listing.status_code == 200
+    assert listing.json() == [
+        {"name": "mmm_model.nc", "bytes": 10, "stored": True},
+        {"name": "config.yml", "bytes": 4, "stored": True},
+    ]
+
+    raw_db.model_versions.update_one(
+        {"model_id": "m1", "version": 1},
+        {"$set": {"artifact": {"name": "mmm_model.nc", "bytes": 7, "blob_path": "models/o/u/job-1/mmm_model.nc"}}},
+    )
+    legacy = api.get("/api/v1/models/m1/versions/1/artifacts", headers=HEADERS).json()
+    assert legacy == [{"name": "mmm_model.nc", "bytes": 7, "stored": True}]
+
+    assert api.get("/api/v1/models/m1/versions/9/artifacts", headers=HEADERS).status_code == 404
+    assert api.get("/api/v1/models/missing/versions/1/artifacts", headers=HEADERS).status_code == 404
+
+
+def test_version_artifact_download_serves_stored_files_only(api, raw_db, monkeypatch):
+    _seed_sync(raw_db)
+    raw_db.model_versions.update_one(
+        {"model_id": "m1", "version": 1},
+        {"$set": {"artifact": {
+            "name": "mmm_model.nc", "bytes": 10, "blob_path": "models/o/u/job-1/mmm_model.nc",
+            "files": [{"name": "mmm_model.nc", "bytes": 10}, {"name": "train.py", "bytes": 3}],
+            "stored": ["mmm_model.nc"],
+        }}},
+    )
+
+    async def fake_read(*, org_id, user_id, job_id, name):
+        return b"NC-BYTES" if (job_id, name) == ("job-1", "mmm_model.nc") else None
+
+    monkeypatch.setattr(api.app.state.training, "read_run_file", fake_read)
+    res = api.get("/api/v1/models/m1/versions/1/artifacts/mmm_model.nc", headers=HEADERS)
+    assert res.status_code == 200
+    assert res.content == b"NC-BYTES"
+    assert res.headers["content-disposition"] == 'attachment; filename="mmm_model.nc"'
+    assert api.get("/api/v1/models/m1/versions/1/artifacts/train.py", headers=HEADERS).status_code == 404
+    assert api.get("/api/v1/models/m1/versions/1/artifacts/nope.csv", headers=HEADERS).status_code == 404
+    assert api.get("/api/v1/models/m1/versions/9/artifacts/mmm_model.nc", headers=HEADERS).status_code == 404
+
+
 def _record_second_version():
     return dict(
         org_id=ORG_A, user_id=USER_1, job_id="job-2", params={}, metrics=None, artifact=None,

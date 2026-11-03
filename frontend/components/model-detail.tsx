@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, Loader2, Play, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
+import { ChevronLeft, FolderOpen, Loader2, Play, RefreshCw, Square, Terminal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -12,6 +12,7 @@ import { LogTerminal } from "@/components/log-terminal";
 import { HEALTH_STYLE, HealthPill, Pill, formatWhen, modelHref, normalizeModelName } from "@/components/models-ui";
 import { JobProgressBar } from "@/components/job-primitives";
 import { RetrainDialog } from "@/components/retrain-dialog";
+import { VersionArtifactsDialog } from "@/components/version-artifacts-dialog";
 import { useDeploymentLogs } from "@/lib/deployment-logs";
 import {
   useAllocateDeployment,
@@ -218,6 +219,7 @@ function VersionRow({
   onSelect,
   onRetrain,
   onAllocate,
+  onArtifacts,
   onDelete,
   allocating,
   deployment,
@@ -227,6 +229,7 @@ function VersionRow({
   onSelect: () => void;
   onRetrain: () => void;
   onAllocate: () => void;
+  onArtifacts: () => void;
   onDelete: () => void;
   allocating: boolean;
   deployment: Deployment | null;
@@ -271,6 +274,14 @@ function VersionRow({
         </div>
       </button>
       <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onArtifacts}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+        >
+          <FolderOpen className="size-3.5" aria-hidden />
+          Artifacts
+        </button>
         <button
           type="button"
           onClick={onRetrain}
@@ -326,6 +337,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [retrainTarget, setRetrainTarget] = useState<ModelVersion | null>(null);
   const [retrainJobId, setRetrainJobId] = useState<string | null>(null);
+  const [artifactsTarget, setArtifactsTarget] = useState<ModelVersion | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -427,6 +439,7 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
               onSelect={() => setSelectedVersion(version.version)}
               onRetrain={() => setRetrainTarget(version)}
               onAllocate={() => allocate.mutate({ modelId, version: version.version })}
+              onArtifacts={() => setArtifactsTarget(version)}
               onDelete={() => {
                 setDeleteError(null);
                 setDeleteTarget({ kind: "version", version });
@@ -486,6 +499,16 @@ function ModelWorkspace({ modelId }: { modelId: string }) {
           onConfirm={confirmRetrain}
           onOpenChange={(open) => {
             if (!open) setRetrainTarget(null);
+          }}
+        />
+      ) : null}
+
+      {artifactsTarget ? (
+        <VersionArtifactsDialog
+          modelId={modelId}
+          version={artifactsTarget.version}
+          onOpenChange={(open) => {
+            if (!open) setArtifactsTarget(null);
           }}
         />
       ) : null}

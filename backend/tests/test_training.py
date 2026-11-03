@@ -124,6 +124,64 @@ def test_successful_job_records_progress_metrics_and_artifact(raw_db, member, tm
         assert data == b"fake-model"
 
 
+def test_removing_a_job_deletes_every_stored_run_file(tmp_path):
+    import asyncio
+    import types
+
+    from integrations.training.service import TrainingService
+
+    deleted = []
+
+    class Container:
+        async def delete_blob(self, name):
+            deleted.append(name)
+
+    stub = types.SimpleNamespace(
+        _blob=types.SimpleNamespace(get_container_client=lambda name: Container()),
+        _settings=types.SimpleNamespace(blob_container="c", training_output_dir=tmp_path),
+    )
+    artifact = {
+        "name": "mmm_model.nc", "blob_container": "c", "blob_path": "models/o/u/job-1/mmm_model.nc",
+        "stored": ["mmm_model.nc", "config.yml"],
+    }
+    asyncio.run(TrainingService._remove_job_files(stub, "job-1", artifact))
+    assert deleted == ["models/o/u/job-1/mmm_model.nc", "models/o/u/job-1/config.yml"]
+
+    deleted.clear()
+    legacy = {"name": "mmm_model.nc", "blob_container": "c", "blob_path": "models/o/u/job-2/mmm_model.nc"}
+    asyncio.run(TrainingService._remove_job_files(stub, "job-2", legacy))
+    assert deleted == ["models/o/u/job-2/mmm_model.nc"]
+
+
+def test_store_run_files_uploads_present_run_files_under_the_job(tmp_path):
+    import asyncio
+    import types
+
+    from integrations.training.service import TrainingService, run_blob_path
+
+    uploads = {}
+
+    class Container:
+        async def upload_blob(self, name, data, overwrite):
+            uploads[name] = data
+
+    stub = types.SimpleNamespace(
+        _blob=types.SimpleNamespace(get_container_client=lambda name: Container()),
+        _settings=types.SimpleNamespace(blob_container="c"),
+    )
+    (tmp_path / "config.yml").write_text("a: 1", encoding="utf-8")
+    (tmp_path / "dataset.csv").write_text("x,y", encoding="utf-8")
+    (tmp_path / "mmm_model.nc").write_bytes(b"model")
+    (tmp_path / "notes.txt").write_text("ignored", encoding="utf-8")
+
+    stored = asyncio.run(TrainingService._store_run_files(stub, "org", "user", "job-9", tmp_path))
+    assert sorted(stored) == ["config.yml", "dataset.csv"]
+    assert uploads == {
+        run_blob_path("org", "user", "job-9", "config.yml"): b"a: 1",
+        run_blob_path("org", "user", "job-9", "dataset.csv"): b"x,y",
+    }
+
+
 def test_failed_job_records_the_trainer_error(raw_db, member, tmp_path):
     with make_client("fail", tmp_path) as client:
         job_id = submit(client)
@@ -215,6 +273,8 @@ def test_real_mmm_trainer_runs_end_to_end(raw_db, member, tmp_path):
         assert body["status"] == "succeeded", body
         assert body["metrics"]["channels"]
         assert body["artifact"]["bytes"] > 1_000_000
+        stored = raw_db.jobs.find_one({"id": job_id})["artifact"]["stored"]
+        assert stored == ["mmm_model.nc"]
 
 
 def _dt(epoch: float):
