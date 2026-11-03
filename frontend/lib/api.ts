@@ -56,6 +56,23 @@ export async function apiPostJson<T>(path: string, token: string, body: unknown)
   return (await res.json()) as T;
 }
 
+export async function apiDownload(path: string, token: string, fallbackName: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
+  const match = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "");
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = match?.[1] ?? fallbackName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function apiDelete<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "DELETE",

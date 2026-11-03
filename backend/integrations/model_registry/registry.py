@@ -215,6 +215,51 @@ class ModelRegistry:
             detail=f"{label} deallocated and archived, purged after 7 days",
         )
 
+    async def list_archived_models(self, *, org_id: str, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        cursor = (
+            self._db.models.find({"org_id": org_id, "user_id": user_id, "archived_at": {"$ne": None}}, MODEL_PROJECTION)
+            .sort("archived_at", DESCENDING)
+            .limit(limit)
+        )
+        return [await self._with_archived_versions(org_id=org_id, user_id=user_id, model=doc) async for doc in cursor]
+
+    async def get_archived_model(self, *, org_id: str, user_id: str, model_id: str) -> dict[str, Any] | None:
+        doc = await self._db.models.find_one(
+            {"org_id": org_id, "user_id": user_id, "id": model_id, "archived_at": {"$ne": None}}, MODEL_PROJECTION
+        )
+        if doc is None:
+            return None
+        return await self._with_archived_versions(org_id=org_id, user_id=user_id, model=doc)
+
+    async def _with_archived_versions(
+        self, *, org_id: str, user_id: str, model: dict[str, Any]
+    ) -> dict[str, Any]:
+        cursor = self._db.model_versions.find(
+            {"org_id": org_id, "user_id": user_id, "model_id": model["id"], "archived_at": {"$ne": None}},
+            VERSION_PROJECTION,
+        ).sort("version", DESCENDING)
+        return {**model, "versions": [doc async for doc in cursor]}
+
+    async def restore_model(self, *, org_id: str, user_id: str, model_id: str, actor_email: str | None) -> None:
+        model = await self.get_archived_model(org_id=org_id, user_id=user_id, model_id=model_id)
+        if model is None:
+            raise LookupError("Archived model not found")
+        if await self.name_taken(org_id=org_id, user_id=user_id, name=model["name"], exclude_model_id=model_id):
+            suggestions = await self.suggest_names(org_id=org_id, user_id=user_id, base=model["name"])
+            raise ModelNameTaken(model["name"], suggestions)
+        scope = {"org_id": org_id, "user_id": user_id, "model_id": model_id}
+        now = _now()
+        await self._db.model_versions.update_many(
+            {**scope, "archived_at": {"$ne": None}}, {"$set": {"archived_at": None, "purge_at": None}}
+        )
+        await self._db.model_versions.update_many({**scope}, {"$pull": {"tags": LATEST_TAG}})
+        await self._refresh_model(scope, now)
+        label = ", ".join(f"v{v['version']}" for v in model["versions"])
+        await self.record_event(
+            org_id=org_id, user_id=user_id, model_id=model_id, action="model_restored",
+            version=None, actor_email=actor_email, detail=f"{label} restored from the archive",
+        )
+
     async def due_purge(self, *, limit: int = 50) -> list[dict[str, Any]]:
         cursor = self._db.model_versions.find(
             {"purge_at": {"$lte": _now()}},

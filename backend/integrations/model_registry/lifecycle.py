@@ -71,38 +71,19 @@ class ModelLifecycle:
         if live and not deallocate:
             return {"outcome": "needs_confirmation", "deployments": live}
 
-        if live:
-            stopped: list[str] = []
-            for dep in live:
-                try:
-                    await self._deployments.deallocate(
-                        org_id=org_id, user_id=user_id, dep_id=dep["id"], actor_email=actor_email
-                    )
-                except (DeploymentBusy, DeprovisionFailed) as exc:
-                    return {"outcome": "blocked", "reason": str(exc)}
-                stopped.append(dep["id"])
-            await self._registry.archive_versions(
-                org_id=org_id, user_id=user_id, model_id=model_id, versions=numbers, actor_email=actor_email
-            )
-            return {"outcome": "archived", "versions": numbers, "deallocated": stopped}
-
-        result = await self._training.delete_jobs(
-            org_id=org_id, user_id=user_id, job_ids=[v["job_id"] for v in versions], actor_email=actor_email
+        stopped: list[str] = []
+        for dep in live:
+            try:
+                await self._deployments.deallocate(
+                    org_id=org_id, user_id=user_id, dep_id=dep["id"], actor_email=actor_email
+                )
+            except (DeploymentBusy, DeprovisionFailed) as exc:
+                return {"outcome": "blocked", "reason": str(exc)}
+            stopped.append(dep["id"])
+        await self._registry.archive_versions(
+            org_id=org_id, user_id=user_id, model_id=model_id, versions=numbers, actor_email=actor_email
         )
-        deleted = list(result["deleted"])
-        blocked = []
-        for item in result["skipped"]:
-            if item["reason"] != "Job not found":
-                blocked.append(item)
-                continue
-            version = next(v for v in versions if v["job_id"] == item["id"])
-            await self._registry.delete_version(
-                org_id=org_id, user_id=user_id, model_id=model_id, version=version["version"], actor_email=actor_email
-            )
-            deleted.append(item["id"])
-        if blocked:
-            return {"outcome": "blocked", "reason": blocked[0]["reason"], "deleted": deleted}
-        return {"outcome": "deleted", "versions": numbers, "deleted": deleted}
+        return {"outcome": "archived", "versions": numbers, "deallocated": stopped}
 
     async def purge_due(self) -> int:
         purged = 0

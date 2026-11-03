@@ -1,12 +1,12 @@
 "use client";
 
-import { Archive, Boxes, ChevronDown, Search } from "lucide-react";
+import { Boxes, Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { ArchiveBrowser } from "@/components/archive-browser";
 import { Pill, formatWhen, modelHref, normalizeModelName } from "@/components/models-ui";
-import { useDeploymentArchive, useDeployments, useModels } from "@/lib/queries";
-import type { ArchivedDeployment } from "@/lib/types";
+import { useDeployments, useModels } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 type Filter = "all" | "live" | "idle";
@@ -41,6 +41,7 @@ export function ModelsList() {
   }, [models.data]);
 
   const all = useMemo(() => models.data ?? [], [models.data]);
+  const modelNames = useMemo(() => new Map(all.map((model) => [model.id, model.name])), [all]);
   const liveCount = all.filter((model) => (liveByModel.get(model.id) ?? 0) > 0).length;
   const counts: Record<Filter, number> = { all: all.length, live: liveCount, idle: all.length - liveCount };
 
@@ -63,6 +64,7 @@ export function ModelsList() {
             {all.length} model{all.length === 1 ? "" : "s"} · open one to manage its versions and containers
           </p>
         </div>
+        <ArchiveBrowser modelNames={modelNames} />
       </header>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -157,92 +159,6 @@ export function ModelsList() {
           })}
         </ul>
       ) : null}
-
-      <ArchiveSection modelNames={new Map(all.map((model) => [model.id, model.name]))} />
     </div>
-  );
-}
-
-function ArchiveSection({ modelNames }: { modelNames: Map<string, string> }) {
-  const archive = useDeploymentArchive();
-  const [open, setOpen] = useState(false);
-  const items = archive.data ?? [];
-
-  return (
-    <section aria-labelledby="archive-heading" className="rounded-xl border border-border bg-card">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center justify-between gap-3 rounded-xl px-5 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50"
-      >
-        <span className="flex items-center gap-2.5">
-          <Archive className="size-4 text-muted-foreground" aria-hidden />
-          <span id="archive-heading" className="text-sm font-semibold">
-            Container archive
-          </span>
-          <span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{items.length}</span>
-        </span>
-        <ChevronDown className={cn("size-4 text-muted-foreground transition-transform duration-200", open && "rotate-180")} aria-hidden />
-      </button>
-
-      {open ? (
-        <div className="border-t border-border px-5 py-4">
-          <p className="mb-4 text-xs text-muted-foreground">
-            Deallocated containers are kept here for 7 days, then permanently removed. Only you can see your archive.
-          </p>
-          {archive.error ? <p className="text-sm text-destructive">{archive.error.message}</p> : null}
-          {!archive.error && archive.isLoading ? <div className="h-16 animate-pulse rounded-lg bg-muted" aria-hidden /> : null}
-          {!archive.isLoading && !archive.error && items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing archived.</p>
-          ) : null}
-          {items.length > 0 ? (
-            <ul className="divide-y divide-border">
-              {items.map((item) => (
-                <ArchiveRow key={item.id} item={item} modelName={modelNames.get(item.model_id) ?? `Model ${item.model_id.slice(0, 8)}`} />
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function ArchiveRow({ item, modelName }: { item: ArchivedDeployment; modelName: string }) {
-  const days = Math.max(0, Math.min(7, item.days_remaining));
-  const urgent = days <= 1;
-  return (
-    <li className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">
-          {modelName} <span className="font-mono text-xs text-muted-foreground">v{item.version}</span>
-        </p>
-        <p className="mt-0.5 font-mono text-xs text-muted-foreground">{item.container}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Stopped {formatWhen(item.archived_at)}
-          {item.created_by_email ? ` · ${item.created_by_email}` : ""}
-        </p>
-      </div>
-      <div className="flex w-full items-center gap-3 sm:w-64">
-        <div
-          role="meter"
-          aria-label="Days until permanent deletion"
-          aria-valuemin={0}
-          aria-valuemax={7}
-          aria-valuenow={days}
-          aria-valuetext={`${days} of 7 days remaining`}
-          className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
-        >
-          <div
-            className={cn("h-full rounded-full transition-all duration-500", urgent ? "bg-destructive" : "bg-primary")}
-            style={{ width: `${(days / 7) * 100}%` }}
-          />
-        </div>
-        <span className={cn("shrink-0 whitespace-nowrap text-xs tabular-nums", urgent ? "text-destructive" : "text-muted-foreground")}>
-          {days} of 7 days left
-        </span>
-      </div>
-    </li>
   );
 }

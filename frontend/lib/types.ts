@@ -143,6 +143,20 @@ export type ModelDetail = ModelSummary & {
   events: ModelEvent[];
 };
 
+export type ArchivedVersion = ModelVersion & {
+  purge_at: string | null;
+};
+
+export type ArchivedModel = {
+  id: string;
+  name: string;
+  latest_version: number;
+  version_count: number;
+  archived_at: string;
+  purge_at: string | null;
+  versions: ArchivedVersion[];
+};
+
 export type DeploymentStatus = "provisioning" | "running" | "stopped" | "failed" | string;
 
 export type DeploymentHealthState = "live" | "unhealthy" | "unreachable" | DeploymentStatus;

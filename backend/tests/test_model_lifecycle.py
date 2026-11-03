@@ -86,13 +86,18 @@ def test_start_mmm_run_reports_a_taken_name_with_suggestions():
     assert "Revenue Q1-a1b2c3" in result
 
 
-def test_delete_model_removes_it_when_nothing_is_deployed(api, raw_db):
+def test_delete_model_archives_it_for_seven_days_instead_of_removing_it(api, raw_db):
     _seed_sync(raw_db)
     res = api.delete("/api/v1/models/m1", headers=HEADERS)
     assert res.status_code == 200
-    assert res.json()["outcome"] == "deleted"
+    assert res.json()["outcome"] == "archived"
     assert api.get("/api/v1/models", headers=HEADERS).json() == []
     assert api.get("/api/v1/models/m1", headers=HEADERS).status_code == 404
+    archived = api.get("/api/v1/models/archive", headers=HEADERS).json()
+    assert [m["id"] for m in archived] == ["m1"]
+    assert archived[0]["versions"][0]["version"] == 1
+    assert archived[0]["purge_at"] is not None
+    assert raw_db.model_versions.find_one({"model_id": "m1"})["archived_at"] is not None
 
 
 def test_deployed_version_needs_confirmation_then_deallocates_and_archives(api, raw_db):
@@ -113,18 +118,79 @@ def test_deployed_version_needs_confirmation_then_deallocates_and_archives(api, 
     assert raw_db.model_versions.find_one({"model_id": "m1"})["purge_at"] is not None
 
 
-def test_version_whose_training_job_is_missing_is_still_deleted(api, raw_db):
+def test_deleting_the_last_version_archives_the_model(api, raw_db):
     _seed_sync(raw_db)
     res = api.delete("/api/v1/models/m1/versions/1", headers=HEADERS)
     assert res.status_code == 200
-    assert res.json()["outcome"] == "deleted"
+    assert res.json()["outcome"] == "archived"
     assert api.get("/api/v1/models/m1", headers=HEADERS).status_code == 404
+    assert [m["id"] for m in api.get("/api/v1/models/archive", headers=HEADERS).json()] == ["m1"]
 
 
 def test_deleting_unknown_model_or_version_is_not_found(api, raw_db):
     _seed_sync(raw_db)
     assert api.delete("/api/v1/models/missing", headers=HEADERS).status_code == 404
     assert api.delete("/api/v1/models/m1/versions/9", headers=HEADERS).status_code == 404
+
+
+def test_restore_brings_an_archived_model_back_with_its_versions(api, raw_db):
+    _seed_sync(raw_db)
+    api.delete("/api/v1/models/m1", headers=HEADERS)
+    res = api.post("/api/v1/models/m1/restore", headers=HEADERS)
+    assert res.status_code == 200
+    detail = res.json()
+    assert detail["latest_version"] == 1
+    assert [v["version"] for v in detail["versions"]] == [1]
+    assert "latest" in detail["versions"][0]["tags"]
+    assert api.get("/api/v1/models/archive", headers=HEADERS).json() == []
+    stored = raw_db.model_versions.find_one({"model_id": "m1"})
+    assert stored["archived_at"] is None and stored["purge_at"] is None
+
+
+def test_restore_is_refused_while_another_model_uses_the_name(api, raw_db):
+    _seed_sync(raw_db)
+    api.delete("/api/v1/models/m1", headers=HEADERS)
+    now = datetime.now(UTC)
+    raw_db.models.insert_one({
+        "id": "m2", "org_id": ORG_A, "user_id": USER_1, "name": "mmm · sales", "latest_version": 1,
+        "version_count": 1, "created_at": now, "updated_at": now, "archived_at": None,
+    })
+    res = api.post("/api/v1/models/m1/restore", headers=HEADERS)
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "name_taken"
+    assert res.json()["detail"]["suggestions"]
+    assert api.get("/api/v1/models/archive", headers=HEADERS).json()[0]["id"] == "m1"
+
+
+def test_restore_of_a_live_or_unknown_model_is_not_found(api, raw_db):
+    _seed_sync(raw_db)
+    assert api.post("/api/v1/models/m1/restore", headers=HEADERS).status_code == 404
+    assert api.post("/api/v1/models/missing/restore", headers=HEADERS).status_code == 404
+
+
+def test_download_zips_the_model_file_and_manifest_for_archived_models_only(api, raw_db, monkeypatch):
+    import io
+    import json
+    import zipfile
+
+    _seed_sync(raw_db)
+    assert api.get("/api/v1/models/m1/download", headers=HEADERS).status_code == 404
+    api.delete("/api/v1/models/m1", headers=HEADERS)
+
+    async def fake_read(*, org_id, user_id, job_id):
+        return ("mmm_model.nc", b"MODEL-BYTES") if job_id == "job-1" else None
+
+    monkeypatch.setattr(api.app.state.training, "read_model_file", fake_read)
+    res = api.get("/api/v1/models/m1/download", headers=HEADERS)
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert res.headers["content-disposition"] == 'attachment; filename="MMM-sales.zip"'
+    with zipfile.ZipFile(io.BytesIO(res.content)) as archive:
+        assert archive.read("v1/mmm_model.nc") == b"MODEL-BYTES"
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["model"]["name"] == "MMM · sales"
+    assert manifest["versions"][0]["model_file"] == "v1/mmm_model.nc"
+    assert manifest["versions"][0]["params"] == {}
 
 
 def _record_second_version():
