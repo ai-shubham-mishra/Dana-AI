@@ -137,17 +137,9 @@ export function PlansList() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h2 className="truncate text-base font-semibold" title={plan.name}>
-                      {plan.name}
-                    </h2>
-                    <span
-                      className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
-                      title="Slug for the / picker in chat"
-                    >
-                      /{plan.slug}
-                    </span>
-                  </div>
+                  <h2 className="truncate text-base font-semibold" title={plan.name}>
+                    {plan.name}
+                  </h2>
                   <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
                     {plan.description || "No description"}
                   </p>

@@ -13,7 +13,7 @@ export function PlanViewDialog({
 }: {
   plan: Plan;
   onOpenChange: (open: boolean) => void;
-  onEdit: (plan: Plan) => void;
+  onEdit?: (plan: Plan) => void;
 }) {
   return (
     <Dialog.Root open onOpenChange={onOpenChange}>
@@ -43,7 +43,7 @@ export function PlanViewDialog({
 
           <div className="mt-6 flex justify-end gap-2">
             <Dialog.Close className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Close</Dialog.Close>
-            {plan.is_owner ? (
+            {plan.is_owner && onEdit ? (
               <button
                 type="button"
                 onClick={() => onEdit(plan)}

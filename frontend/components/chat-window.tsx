@@ -7,13 +7,14 @@ import { ArrowDown, BarChart3, Cable, Circle, CircleCheck, CircleDashed, Loader2
 import { ApprovalPanel } from "@/components/approval-panel";
 import { Markdown } from "@/components/markdown";
 import { PlanSlashMenu, slashOptions, slashQuery, type SlashOption } from "@/components/plan-slash-menu";
+import { PlanViewDialog } from "@/components/plan-view-dialog";
 import { ReasoningTicker, ThinkingBlock, ToolStatusIcon, splitReply } from "@/components/thinking";
 import { apiGet } from "@/lib/api";
 import { createChat, resumeChat, streamChatMessage, type StreamHandlers } from "@/lib/chat";
 import { useAccessToken } from "@/lib/auth";
 import { useChatSelection } from "@/lib/chat-selection";
 import { useChats, useMessages, usePending, usePlans } from "@/lib/queries";
-import type { ChatMessage, Decision, TodoItem } from "@/lib/types";
+import type { ChatMessage, Decision, Plan, TodoItem } from "@/lib/types";
 
 // carried: a pending chip from before a HITL pause, waiting to be adopted by the resumed run's tool call.
 type ToolChip = { id: string; name: string; done: boolean; failed?: boolean; carried?: boolean };
@@ -227,6 +228,7 @@ function Composer({
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [preview, setPreview] = useState<Plan | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuId = useId();
   const plans = usePlans();
@@ -268,9 +270,7 @@ function Composer({
         setActive((highlighted + step + options.length) % options.length);
         return;
       }
-      const typed = draft.trim().toLowerCase();
-      const exactSlug = (plans.data ?? []).some((plan) => typed === `/${plan.slug}`);
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !exactSlug)) {
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
         event.preventDefault();
         pick(options[highlighted]);
         return;
@@ -293,8 +293,10 @@ function Composer({
           totalPlans={plans.data?.length ?? 0}
           onHover={setActive}
           onPick={pick}
+          onPreview={setPreview}
         />
       )}
+      {preview ? <PlanViewDialog plan={preview} onOpenChange={(open) => !open && setPreview(null)} /> : null}
       <textarea
         ref={textareaRef}
         value={draft}
