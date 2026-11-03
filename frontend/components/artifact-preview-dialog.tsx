@@ -3,8 +3,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Loader2, X } from "lucide-react";
 
-import { formatBytes, formatPreviewText } from "@/lib/artifact-preview";
-import { useVersionArtifactText } from "@/lib/queries";
+import { ArtifactPreviewBody } from "@/components/artifact-preview-body";
+import { formatBytes } from "@/lib/artifact-preview";
+import { useVersionArtifactPreview } from "@/lib/queries";
 import type { VersionArtifact } from "@/lib/types";
 
 export function ArtifactPreviewDialog({
@@ -18,7 +19,7 @@ export function ArtifactPreviewDialog({
   artifact: VersionArtifact;
   onClose: () => void;
 }) {
-  const content = useVersionArtifactText(modelId, version, artifact.name, true);
+  const preview = useVersionArtifactPreview(modelId, version, artifact.name, true);
 
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
@@ -36,19 +37,17 @@ export function ArtifactPreviewDialog({
               <X className="size-4" aria-hidden />
             </Dialog.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto bg-muted/40">
-            {content.isLoading ? (
+          <div className="flex min-h-0 flex-1 flex-col bg-muted/40">
+            {preview.isLoading ? (
               <div className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" aria-hidden />
                 Loading file…
               </div>
-            ) : content.error ? (
-              <p className="p-5 text-sm text-destructive">{content.error.message}</p>
-            ) : (
-              <pre className="whitespace-pre p-5 font-mono text-xs leading-relaxed">
-                {formatPreviewText(artifact.name, content.data ?? "")}
-              </pre>
-            )}
+            ) : preview.error ? (
+              <p className="p-5 text-sm text-destructive">{preview.error.message}</p>
+            ) : preview.data ? (
+              <ArtifactPreviewBody preview={preview.data} />
+            ) : null}
           </div>
         </Dialog.Content>
       </Dialog.Portal>
