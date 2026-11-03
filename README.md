@@ -107,7 +107,7 @@ To mint a dev token from the vault secret: `cd backend && PYTHONPATH=. ./.venv/b
 - The agent pauses before a gated action and emits an `interrupt` SSE event instead of `done`. The payload lists each action with its `allowed_decisions`.
 - `GET /api/v1/chats/{id}/pending` returns the pending approval, or `null`.
 - `POST /api/v1/chats/{id}/resume` with `{"decisions": [...]}` continues the run. Decision types: `approve`, `edit` (with `edited_action: {name, args}`), `reject` (optional `message`), and `respond` (the user's answer for `ask_user`).
-- `ask_user` accepts only `respond`. `initiate_ml_training` accepts `approve`, `edit`, or `reject`. `retrain_model_version` accepts `approve` or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
+- `ask_user` accepts only `respond`. `run_training_script` accepts `approve` or `reject`. `retrain_model_version` accepts `approve` or `reject`. Decisions that do not match are rejected with 422. Resume without a pending approval returns 409. Sending a new message while an approval is pending returns 409.
 - Run state is stored in the `agent_checkpoints` and `agent_checkpoint_writes` collections in Mongo, so a pending approval survives a backend restart.
 
 ## Thinking and run progress
