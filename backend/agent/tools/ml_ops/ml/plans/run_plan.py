@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any
 
 from pydantic import Field, ValidationError
@@ -21,9 +22,10 @@ class RunPlanInput(ToolInput):
 class RunPlanTool(BaseTool):
     name: str = RUN_PLAN_TOOL
     description: str = (
-        "Train a new model from a saved plan with its exact stored configuration and date window. A run always creates "
-        "a new model, never a new version of an existing one. Ask the user which plan to use and what to name the new "
-        "model before calling this. The user sees the stored configuration on an approval card and must approve it."
+        "Train a new model from a saved plan with its exact stored configuration. The date window keeps the plan's "
+        "length and always ends on today's date. A run always creates a new model, never a new version of an existing "
+        "one. Ask the user which plan to use and what to name the new model before calling this. The user sees the "
+        "configuration on an approval card and must approve it."
     )
 
     def get_input_schema(self) -> type[ToolInput]:
@@ -51,15 +53,15 @@ class RunPlanTool(BaseTool):
                 ),
             )
         try:
-            recipe = MMMPlan(**plan["spec"])
+            recipe = MMMPlan(**plan["spec"]).anchored_to(date.today())
         except (ValidationError, PlanError) as exc:
             return ToolOutput(success=False, error=f"The saved plan cannot be run: {exc}")
 
         decision = request_plan_approval(
             RUN_PLAN_TOOL,
-            {"plan": plan["name"], "plan_id": plan_id, "model": name, "configuration": plan["spec"]},
-            f"Train a new model '{name}' from plan '{plan['name']}' with its saved configuration and date window? "
-            "This always creates a new model.",
+            {"plan": plan["name"], "plan_id": plan_id, "model": name, "configuration": recipe.to_dict()},
+            f"Train a new model '{name}' from plan '{plan['name']}' with its saved configuration and a date window "
+            f"ending today ({recipe.date_end.isoformat()})? This always creates a new model.",
         )
         if decision.get("type") == "reject":
             reason = str(decision.get("message") or "").strip()

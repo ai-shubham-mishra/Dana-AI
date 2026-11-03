@@ -5,7 +5,7 @@ description: Use saved training plans. Each plan has a slug. When the user types
 
 # Training plans
 
-A plan is a saved, reusable training recipe. Running a plan always trains a brand-new model with the plan's exact stored configuration and date window. Plans never add versions to an existing model. Users create plans themselves on the Plans page, so never ask the user to create one in chat.
+A plan is a saved, reusable training recipe. Running a plan always trains a brand-new model with the plan's exact stored configuration. The date window keeps the plan's length but always ends on the run date (today), so every run uses the latest data. Plans never add versions to an existing model. Users create plans themselves on the Plans page, so never ask the user to create one in chat.
 
 ## /plans, or "run a plan"
 
@@ -20,10 +20,9 @@ When the message starts with `/<slug>`, the directive already names the plan and
 ## Running a chosen plan
 
 1. Ask for the name of the new model with `ask_user` as a text question. Suggest a descriptive name. Do not reuse an existing model name.
-2. Ask the training-window question with `ask_user`, defaulting to the plan's saved window.
-3. Call `run_plan` with `plan_id` and `model_name`. The user sees the stored configuration on an approval card and approves or rejects it.
-4. If `run_plan` reports that the name is taken, it lists unique suggestions. Ask the user to pick one, then call `run_plan` again.
-5. After a successful run, tell the user the job is queued and that progress is on the Jobs tab.
+2. Call `run_plan` with `plan_id` and `model_name`. The window keeps the plan's length and ends on today's date, so do not ask a window question. The user sees that configuration on an approval card and approves or rejects it.
+3. If `run_plan` reports that the name is taken, it lists unique suggestions. Ask the user to pick one, then call `run_plan` again.
+4. After a successful run, tell the user the job is queued and that progress is on the Jobs tab.
 
 
 ## Saving a plan from a conversation
