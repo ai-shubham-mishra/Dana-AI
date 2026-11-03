@@ -1,34 +1,33 @@
 "use client";
 
-import { Highlight, themes } from "prism-react-renderer";
-import { useEffect, useState } from "react";
+import { Highlight, type PrismTheme } from "prism-react-renderer";
+import { useState } from "react";
 
 import { PREVIEW_MAX_ROWS, type ArtifactPreview, type CodeLanguage, type TablePreview } from "@/lib/artifact-preview";
 import { cn } from "@/lib/utils";
 
-function useIsDark() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const root = document.documentElement;
-    const sync = () => setDark(root.classList.contains("dark"));
-    sync();
-    const observer = new MutationObserver(sync);
-    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
-  return dark;
-}
+// Brand tokens from globals.css, so colours follow light and dark mode.
+const BRAND_CODE_THEME: PrismTheme = {
+  plain: { color: "var(--foreground)", backgroundColor: "var(--card)" },
+  styles: [
+    { types: ["comment", "prolog", "doctype", "cdata"], style: { color: "var(--muted-foreground)", fontStyle: "italic" } },
+    { types: ["keyword", "tag", "selector", "atrule", "important"], style: { color: "var(--primary)" } },
+    { types: ["string", "char", "attr-value", "inserted", "regex"], style: { color: "var(--success)" } },
+    { types: ["number", "boolean", "constant", "symbol", "deleted", "entity", "url"], style: { color: "var(--cta)" } },
+    { types: ["property", "attr-name", "function", "class-name", "builtin", "variable"], style: { color: "var(--brand-purple)" } },
+    { types: ["punctuation", "operator"], style: { color: "var(--muted-foreground)" } },
+  ],
+};
 
 function CodeView({ text, language }: { text: string; language: CodeLanguage }) {
-  const theme = useIsDark() ? themes.nightOwl : themes.github;
   return (
-    <Highlight theme={theme} code={text.replace(/\n$/, "")} language={language}>
+    <Highlight theme={BRAND_CODE_THEME} code={text.replace(/\n$/, "")} language={language}>
       {({ tokens, getTokenProps, style }) => (
         <div className="min-h-0 flex-1 overflow-auto" style={style}>
           <div className="min-w-max p-4 font-mono text-xs leading-relaxed">
             {tokens.map((line, i) => (
               <div key={i} className="flex">
-                <span className="w-10 shrink-0 select-none pr-4 text-right tabular-nums opacity-50">{i + 1}</span>
+                <span className="w-10 shrink-0 select-none pr-4 text-right tabular-nums text-muted-foreground">{i + 1}</span>
                 <span className="whitespace-pre">
                   {line.length === 0
                     ? " "
