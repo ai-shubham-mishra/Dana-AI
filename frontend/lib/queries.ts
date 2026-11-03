@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiDelete, apiDeleteNoContent, apiDownload, apiFetchBlob, apiGet, apiPatchJson, apiPost, apiPostJson, apiPut, ApiError } from "./api";
+import { parseArtifactPreview, type ArtifactPreview } from "./artifact-preview";
 import { useAccessToken } from "./auth";
 import type {
   ArchivedDeployment,
@@ -170,16 +171,16 @@ export function useDownloadVersionArtifact() {
   });
 }
 
-export function useVersionArtifactText(modelId: string, version: number, name: string, enabled: boolean) {
+export function useVersionArtifactPreview(modelId: string, version: number, name: string, enabled: boolean) {
   const token = useAccessToken();
-  return useQuery<string, ApiError>({
-    queryKey: ["version-artifact-text", token, modelId, version, name],
+  return useQuery<ArtifactPreview, ApiError>({
+    queryKey: ["version-artifact-preview", token, modelId, version, name],
     queryFn: async () => {
       const blob = await apiFetchBlob(
         `/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/artifacts/${encodeURIComponent(name)}`,
         token ?? "",
       );
-      return blob.text();
+      return parseArtifactPreview(name, blob);
     },
     enabled: Boolean(token) && enabled,
     staleTime: Infinity,
