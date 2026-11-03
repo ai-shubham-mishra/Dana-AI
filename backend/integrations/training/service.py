@@ -5,15 +5,17 @@ import shutil
 import sys
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from azure.core.exceptions import ResourceNotFoundError
 
 from config.settings import BACKEND_ROOT, Settings
 from integrations.model_registry.registry import InvalidModelName, ModelNameTaken, normalize_model_name
+from integrations.training.drafts import DRAFT_META_FILE, DraftError, apply_script_edit, draft_dir, sha256_text
 from integrations.training.mmm.dataset import build_dataset, validate_sources
 from integrations.training.mmm.plan import MMMPlan, PlanError
 from integrations.training.mmm.recipe import build_config, dump_config, render_script
@@ -23,7 +25,14 @@ from integrations.training.mmm.request import (
     load_dataset_spec,
     validate_request,
 )
-from integrations.training.mmm.run_folder import RUN_FILES, missing_outputs, run_file_sizes, write_inputs
+from integrations.training.mmm.run_folder import (
+    MODEL_FILE,
+    RUN_FILES,
+    TRAIN_FILE,
+    missing_outputs,
+    run_file_sizes,
+    write_inputs,
+)
 from integrations.training.mmm.sandbox import STREAM_LINE_LIMIT, SandboxError, run_script, sandbox_env
 from integrations.training.protocol import parse_line
 
@@ -33,8 +42,14 @@ JOB_KIND = "mmm_training"
 ACTIVE_STATUSES = ("queued", "running")
 MMM_DATA_FILE = "mmm_demo.csv"
 MMM_CONFIG_FILE = "mmm_demo.yaml"
-MODEL_FILE = "mmm_model.nc"
 STDERR_TAIL = 20
+INTERRUPTED = "Training was interrupted by a server shutdown"
+
+
+class Draft(NamedTuple):
+    run_id: str
+    script: str
+    script_sha256: str
 
 
 def run_blob_path(org_id: str, user_id: str, job_id: str, name: str) -> str:
@@ -69,8 +84,8 @@ def _title(request: MMMRequest) -> str:
     return f"MMM training · {request.kpi} · {request.date_start} to {request.date_end}"
 
 
-def _plan_title(plan: MMMPlan) -> str:
-    return f"MMM training · {plan.kpi} · {plan.date_start} to {plan.date_end}"
+def _params_title(params: dict[str, Any]) -> str:
+    return f"MMM training · {params['kpi']} · {params['date_start']} to {params['date_end']}"
 
 
 async def _drain(stream: asyncio.StreamReader, tail: deque[str]) -> None:
@@ -126,18 +141,55 @@ class TrainingService:
         source_version: int | None = None,
         actor_email: str | None = None,
     ) -> str:
-        if self._connector_pool is None:
-            raise PlanError("connector data is not configured for training")
-        stored_name = None
-        if model_id is None:
-            stored_name = await self._check_new_model_name(org_id=org_id, user_id=user_id, raw=model_name)
-        else:
-            if self._models is None:
-                raise PlanError("model registry is not configured")
-            if await self._models.get_model(org_id=org_id, user_id=user_id, model_id=model_id) is None:
-                raise LookupError(f"model {model_id} was not found")
+        stored_name = await self._resolve_target(
+            org_id=org_id, user_id=user_id, model_id=model_id, model_name=model_name
+        )
         await validate_sources(self._connector_pool, self._datasets_schema, plan)
         job_id = uuid.uuid4().hex
+        await self._insert_job(
+            job_id=job_id,
+            org_id=org_id,
+            user_id=user_id,
+            chat_id=chat_id,
+            params=plan.to_dict(),
+            model_id=model_id,
+            model_name=stored_name,
+            source=source,
+            source_version=source_version,
+            actor_email=actor_email,
+        )
+        task = asyncio.create_task(self._run_plan(job_id, org_id, user_id, plan))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job_id
+
+    async def _resolve_target(
+        self, *, org_id: str, user_id: str, model_id: str | None, model_name: str | None
+    ) -> str | None:
+        if self._connector_pool is None:
+            raise PlanError("connector data is not configured for training")
+        if model_id is None:
+            return await self._check_new_model_name(org_id=org_id, user_id=user_id, raw=model_name)
+        if self._models is None:
+            raise PlanError("model registry is not configured")
+        if await self._models.get_model(org_id=org_id, user_id=user_id, model_id=model_id) is None:
+            raise LookupError(f"model {model_id} was not found")
+        return None
+
+    async def _insert_job(
+        self,
+        *,
+        job_id: str,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        params: dict[str, Any],
+        model_id: str | None,
+        model_name: str | None,
+        source: str,
+        source_version: int | None,
+        actor_email: str | None,
+    ) -> None:
         now = _now()
         await self._db.jobs.insert_one(
             {
@@ -145,18 +197,18 @@ class TrainingService:
                 "org_id": org_id,
                 "user_id": user_id,
                 "chat_id": chat_id,
-                "title": _plan_title(plan),
+                "title": _params_title(params),
                 "kind": JOB_KIND,
                 "status": "queued",
                 "stage": "queued",
                 "percent": 0,
                 "message": "Waiting for a free training slot",
                 "error": None,
-                "params": plan.to_dict(),
+                "params": params,
                 "metrics": None,
                 "artifact": None,
                 "model_id": model_id,
-                "model_name": stored_name,
+                "model_name": model_name,
                 "model_version": None,
                 "source": source,
                 "source_version": source_version,
@@ -166,10 +218,6 @@ class TrainingService:
             }
         )
         await self._event(job_id, org_id, user_id, "queued", 0, "Waiting for a free training slot")
-        task = asyncio.create_task(self._run_plan(job_id, org_id, user_id, plan))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-        return job_id
 
     async def _check_new_model_name(self, *, org_id: str, user_id: str, raw: str | None) -> str:
         if self._models is None:
@@ -255,6 +303,184 @@ class TrainingService:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job_id
+
+    def draft_path(self, org_id: str, user_id: str, chat_id: str, run_id: str) -> Path:
+        return draft_dir(self._settings.training_output_dir, org_id, user_id, chat_id, run_id)
+
+    async def prepare_mmm_draft(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        plan: MMMPlan,
+        model_id: str | None = None,
+        model_name: str | None = None,
+        source: str = "train",
+        source_version: int | None = None,
+        actor_email: str | None = None,
+    ) -> Draft:
+        stored_name = await self._resolve_target(
+            org_id=org_id, user_id=user_id, model_id=model_id, model_name=model_name
+        )
+        await validate_sources(self._connector_pool, self._datasets_schema, plan)
+        dataset = await build_dataset(self._connector_pool, self._datasets_schema, org_id, plan)
+        config = build_config(plan)
+        run_id = uuid.uuid4().hex
+        script = render_script(config, plan.to_dict(), _now().isoformat())
+        run_dir = self.draft_path(org_id, user_id, chat_id, run_id)
+        write_inputs(
+            run_dir,
+            dataset.columns,
+            dataset.rows,
+            dump_config(config),
+            script,
+            {"plan": plan.to_dict(), "dataset": dataset.log},
+        )
+        digest = sha256_text(script)
+        meta = {
+            "run_id": run_id,
+            "model_id": model_id,
+            "model_name": stored_name,
+            "source": source,
+            "kpi": plan.kpi,
+            "date_start": plan.date_start,
+            "date_end": plan.date_end,
+            "rows": len(dataset.rows),
+        }
+        await asyncio.to_thread(
+            (run_dir / DRAFT_META_FILE).write_text, json.dumps(meta, indent=2, default=str), encoding="utf-8"
+        )
+        now = _now()
+        await self._db.training_drafts.insert_one(
+            {
+                "run_id": run_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "status": "ready",
+                "job_id": None,
+                "model_id": model_id,
+                "model_name": stored_name,
+                "source": source,
+                "source_version": source_version,
+                "params": plan.to_dict(),
+                "script_sha256": digest,
+                "requested_by_email": actor_email,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return Draft(run_id, script, digest)
+
+    async def edit_mmm_draft(
+        self, *, org_id: str, user_id: str, chat_id: str, run_id: str, old_text: str, new_text: str
+    ) -> str:
+        doc = await self._require_draft(org_id=org_id, user_id=user_id, chat_id=chat_id, run_id=run_id)
+        if doc["status"] != "ready":
+            raise DraftError(f"draft {run_id} is {doc['status']} and can no longer be edited")
+        script_path = self.draft_path(org_id, user_id, chat_id, run_id) / TRAIN_FILE
+        current = await asyncio.to_thread(script_path.read_text, encoding="utf-8")
+        updated = apply_script_edit(current, old_text, new_text)
+        digest = sha256_text(updated)
+        await asyncio.to_thread(script_path.write_text, updated, encoding="utf-8")
+        await self._db.training_drafts.update_one(
+            {"run_id": run_id, "status": "ready"},
+            {"$set": {"script_sha256": digest, "updated_at": _now()}},
+        )
+        return digest
+
+    async def submit_mmm_draft(
+        self,
+        *,
+        org_id: str,
+        user_id: str,
+        chat_id: str,
+        run_id: str,
+        script_sha256: str,
+        actor_email: str | None = None,
+    ) -> str:
+        doc = await self._require_draft(org_id=org_id, user_id=user_id, chat_id=chat_id, run_id=run_id)
+        if doc["status"] != "ready":
+            raise DraftError(f"draft {run_id} was already {doc['status']}")
+        if doc["script_sha256"] != script_sha256:
+            raise DraftError("the script changed after it was reviewed. Review the current script before submitting.")
+        stored_name = await self._resolve_target(
+            org_id=org_id, user_id=user_id, model_id=doc.get("model_id"), model_name=doc.get("model_name")
+        )
+        job_id = uuid.uuid4().hex
+        claimed = await self._db.training_drafts.update_one(
+            {
+                "run_id": run_id,
+                "org_id": org_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "status": "ready",
+                "script_sha256": script_sha256,
+            },
+            {"$set": {"status": "submitted", "job_id": job_id, "updated_at": _now()}},
+        )
+        if claimed.modified_count == 0:
+            raise DraftError(f"draft {run_id} changed while it was being submitted. Review it again.")
+        try:
+            await self._insert_job(
+                job_id=job_id,
+                org_id=org_id,
+                user_id=user_id,
+                chat_id=chat_id,
+                params=doc["params"],
+                model_id=doc.get("model_id"),
+                model_name=stored_name,
+                source=doc.get("source") or "train",
+                source_version=doc.get("source_version"),
+                actor_email=actor_email,
+            )
+        except Exception:
+            await self._db.training_drafts.update_one(
+                {"run_id": run_id}, {"$set": {"status": "ready", "job_id": None}}
+            )
+            raise
+        task = asyncio.create_task(
+            self._run_draft(job_id, org_id, user_id, chat_id, run_id, script_sha256)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job_id
+
+    async def _require_draft(self, *, org_id: str, user_id: str, chat_id: str, run_id: str) -> dict[str, Any]:
+        doc = await self._db.training_drafts.find_one(
+            {"run_id": run_id, "org_id": org_id, "user_id": user_id, "chat_id": chat_id}, {"_id": 0}
+        )
+        if doc is None:
+            raise LookupError(f"draft {run_id} was not found")
+        return doc
+
+    async def _run_draft(
+        self, job_id: str, org_id: str, user_id: str, chat_id: str, run_id: str, script_sha256: str
+    ) -> None:
+        async with self._slots:
+            await self._supervised(
+                job_id,
+                org_id,
+                user_id,
+                self._copy_and_run_draft(job_id, org_id, user_id, chat_id, run_id, script_sha256),
+            )
+
+    async def _copy_and_run_draft(
+        self, job_id: str, org_id: str, user_id: str, chat_id: str, run_id: str, script_sha256: str
+    ) -> None:
+        await self._update(job_id, status="running", stage="preparing_run", percent=3,
+                           message="Copying the approved script into the run folder")
+        run_dir = self._settings.training_output_dir / job_id
+        await asyncio.to_thread(
+            shutil.copytree, self.draft_path(org_id, user_id, chat_id, run_id), run_dir
+        )
+        copied = await asyncio.to_thread((run_dir / TRAIN_FILE).read_bytes)
+        if sha256(copied).hexdigest() != script_sha256:
+            raise PlanError("the script changed after approval, so the run was not started. Submit it again.")
+        message = "Run folder ready with the approved training script"
+        await self._progress(job_id, org_id, user_id, {"stage": "run_folder", "percent": 5, "message": message})
+        await self._execute_run_folder(job_id, org_id, user_id, run_dir)
 
     async def get_job(self, *, org_id: str, user_id: str, job_id: str) -> dict[str, Any] | None:
         return await self._db.jobs.find_one(
@@ -440,59 +666,65 @@ class TrainingService:
 
     async def _run_plan(self, job_id: str, org_id: str, user_id: str, plan: MMMPlan) -> None:
         async with self._slots:
+            await self._supervised(job_id, org_id, user_id, self._compile_and_run(job_id, org_id, user_id, plan))
+
+    async def _compile_and_run(self, job_id: str, org_id: str, user_id: str, plan: MMMPlan) -> None:
+        await self._update(job_id, status="running", stage="compiling_data", percent=2,
+                           message="Compiling the dataset from connector tables")
+        dataset = await build_dataset(self._connector_pool, self._datasets_schema, org_id, plan)
+        config = build_config(plan)
+        script = render_script(config, plan.to_dict(), _now().isoformat())
+        run_dir = self._settings.training_output_dir / job_id
+        write_inputs(
+            run_dir,
+            dataset.columns,
+            dataset.rows,
+            dump_config(config),
+            script,
+            {"plan": plan.to_dict(), "dataset": dataset.log},
+        )
+        message = f"Run folder ready with {len(dataset.rows)} rows and the generated training script"
+        await self._progress(job_id, org_id, user_id, {"stage": "run_folder", "percent": 5, "message": message})
+        await self._execute_run_folder(job_id, org_id, user_id, run_dir)
+
+    async def _supervised(self, job_id: str, org_id: str, user_id: str, work: Awaitable[None]) -> None:
+        try:
+            await work
+        except asyncio.CancelledError:
             try:
-                await self._update(job_id, status="running", stage="compiling_data", percent=2,
-                                   message="Compiling the dataset from connector tables")
-                dataset = await build_dataset(self._connector_pool, self._datasets_schema, org_id, plan)
-                config = build_config(plan)
-                script = render_script(config, plan.to_dict(), _now().isoformat())
-                run_dir = self._settings.training_output_dir / job_id
-                write_inputs(
-                    run_dir,
-                    dataset.columns,
-                    dataset.rows,
-                    dump_config(config),
-                    script,
-                    {"plan": plan.to_dict(), "dataset": dataset.log},
-                )
-                message = f"Run folder ready with {len(dataset.rows)} rows and the generated training script"
-                await self._progress(job_id, org_id, user_id,
-                                     {"stage": "run_folder", "percent": 5, "message": message})
+                await self._fail(job_id, org_id, user_id, INTERRUPTED)
+            except Exception:
+                logger.exception("could not record interrupted training job %s", job_id)
+            raise
+        except (PlanError, SandboxError) as exc:
+            await self._fail(job_id, org_id, user_id, str(exc))
+        except Exception as exc:
+            logger.exception("training job %s crashed", job_id)
+            await self._fail(job_id, org_id, user_id, f"Training failed: {type(exc).__name__}")
 
-                async def on_progress(payload: dict[str, Any]) -> None:
-                    await self._progress(job_id, org_id, user_id, payload)
+    async def _execute_run_folder(self, job_id: str, org_id: str, user_id: str, run_dir: Path) -> None:
+        async def on_progress(payload: dict[str, Any]) -> None:
+            await self._progress(job_id, org_id, user_id, payload)
 
-                outcome = await run_script(
-                    [sys.executable, str(run_dir / "train.py")],
-                    run_dir,
-                    on_progress,
-                    env=sandbox_env(),
-                )
-                result = outcome.result or {}
-                if outcome.code != 0 or result.get("status") != "success":
-                    message = result.get("message") or (outcome.tail[-1] if outcome.tail else "") \
-                        or f"training script exited with code {outcome.code}"
-                    await self._fail(job_id, org_id, user_id, message)
-                    return
-                missing = missing_outputs(run_dir)
-                if missing:
-                    await self._fail(job_id, org_id, user_id,
-                                     f"run folder is missing: {', '.join(missing)}")
-                    return
-                result = {**result, "model_path": str(run_dir / MODEL_FILE)}
-                if await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)}):
-                    await self._record_version(job_id, org_id, user_id)
-            except asyncio.CancelledError:
-                try:
-                    await self._fail(job_id, org_id, user_id, "Training was interrupted by a server shutdown")
-                except Exception:
-                    logger.exception("could not record interrupted training job %s", job_id)
-                raise
-            except (PlanError, SandboxError) as exc:
-                await self._fail(job_id, org_id, user_id, str(exc))
-            except Exception as exc:
-                logger.exception("training job %s crashed", job_id)
-                await self._fail(job_id, org_id, user_id, f"Training failed: {type(exc).__name__}")
+        outcome = await run_script(
+            [sys.executable, str(run_dir / TRAIN_FILE)],
+            run_dir,
+            on_progress,
+            env=sandbox_env(),
+        )
+        result = outcome.result or {}
+        if outcome.code != 0 or result.get("status") != "success":
+            message = result.get("message") or (outcome.tail[-1] if outcome.tail else "") \
+                or f"training script exited with code {outcome.code}"
+            await self._fail(job_id, org_id, user_id, message)
+            return
+        missing = missing_outputs(run_dir)
+        if missing:
+            await self._fail(job_id, org_id, user_id, f"run folder is missing: {', '.join(missing)}")
+            return
+        result = {**result, "model_path": str(run_dir / MODEL_FILE)}
+        if await self._finish(job_id, org_id, user_id, result, extra={"run_dir": str(run_dir)}):
+            await self._record_version(job_id, org_id, user_id)
 
     async def _progress(self, job_id: str, org_id: str, user_id: str, payload: dict[str, Any]) -> None:
         stage = str(payload.get("stage", "running"))

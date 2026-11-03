@@ -5,7 +5,7 @@ description: How the MMM training script is generated on the fly from a template
 
 # MMM run script
 
-The training script is not a fixed file. For every run, the platform renders [train_template.py.tmpl](./train_template.py.tmpl) with the approved configuration and writes the result as `train.py` into the run folder. The agent does not write this code by hand.
+The training script is a draft that the agent creates for each run. `create_training_script` starts from [train_template.py.tmpl](./train_template.py.tmpl) and fills in the approved configuration, which the template embeds as literals. `edit_training_script` can then change the draft. The user reviews the script and its sha before `run_training_script` runs it, and the run is refused if the script changed after review. The run writes `train.py` into its own run folder.
 
 ## Placeholders
 
@@ -18,6 +18,7 @@ The template contains three placeholders. Each is replaced with a Python literal
 | `{{GENERATED_AT_LITERAL}}` | ISO timestamp of generation. |
 
 Rendering fails if any `{{...}}` token is left over, so the template and the renderer must stay in sync.
+
 
 ## What the generated script must do
 

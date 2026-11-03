@@ -14,26 +14,22 @@ class _Reader:
         return "https://foundry.example.test" if "ENDPOINT" in name else "test-key"
 
 
-def test_agent_writes_run_artifacts_under_runs_and_denies_other_paths(tmp_path):
+def test_agent_filesystem_is_read_only_so_scripts_only_come_from_tools():
+    agent_root = get_settings().agent_root
     script = [
         AIMessage(content="", tool_calls=[{"name": "write_file", "id": "w1", "args": {"file_path": "/runs/r1/train.py", "content": "print(1)"}}]),
         AIMessage(content="", tool_calls=[{"name": "write_file", "id": "w2", "args": {"file_path": "/config/evil.md", "content": "x"}}]),
-        AIMessage(content="", tool_calls=[{"name": "read_file", "id": "r1", "args": {"file_path": "/runs/r1/train.py"}}]),
         AIMessage(content="done"),
     ]
-    agent = build_dana_agent(
-        ScriptedModel(script=script),
-        get_settings().agent_root,
-        checkpointer=MemorySaver(),
-        runs_root=tmp_path,
-    )
+    agent = build_dana_agent(ScriptedModel(script=script), agent_root, checkpointer=MemorySaver())
     result = asyncio.run(agent.ainvoke({"messages": [HumanMessage(content="train")]}, {"configurable": {"thread_id": "sandbox"}}))
 
-    assert (tmp_path / "r1" / "train.py").read_text(encoding="utf-8") == "print(1)"
-    assert not (get_settings().agent_root / "config" / "evil.md").exists()
+    assert not (agent_root / "runs" / "r1" / "train.py").exists()
+    assert not (agent_root / "config" / "evil.md").exists()
     tool_results = {m.tool_call_id: m.content for m in result["messages"] if isinstance(m, ToolMessage)}
-    assert "print(1)" in tool_results["r1"]
+    assert "denied" in tool_results["w1"].lower() or "permission" in tool_results["w1"].lower()
     assert "denied" in tool_results["w2"].lower() or "permission" in tool_results["w2"].lower()
+
 
 
 def test_model_profile_defers_history_rewrites_to_near_context_limit():

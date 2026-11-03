@@ -13,9 +13,9 @@ from agent.tools.ml_ops.ml.plans.list_plans import ListPlansTool
 from agent.tools.ml_ops.ml.plans.run_plan import RunPlanTool
 from agent.tools.ml_ops.ml.plans.save_plan import SavePlanTool
 from agent.tools.ml_ops.ml.training.check_job_status import CheckJobStatusTool
-from agent.tools.ml_ops.ml.training.create_ml_training_job import CreateMLTrainingJobTool
 from agent.tools.ml_ops.ml.training.create_training_script import CreateTrainingScriptTool
-from agent.tools.ml_ops.ml.training.initiate_ml_training import InitiateMLTrainingTool
+from agent.tools.ml_ops.ml.training.edit_training_script import EditTrainingScriptTool
+from agent.tools.ml_ops.ml.training.run_training_script import RunTrainingScriptTool
 from agent.tools.ml_ops.ml.training.save_ml_assets import SaveMLAssetsTool
 from agent.tools.ml_ops.ml.training.start_mmm_run import StartMmmRunTool
 from agent.tools.ml_ops.ml.training.start_training_job import StartTrainingJobTool
@@ -41,12 +41,12 @@ STATIC_TOOLS = [
     CheckLastJobTool(),
     CheckLatestModelTool(),
     CheckLastModelRunTool(),
-    InitiateMLTrainingTool(),
     StartTrainingJobTool(),
     StartMmmRunTool(),
-    CreateMLTrainingJobTool(),
     SaveMLAssetsTool(),
     CreateTrainingScriptTool(),
+    EditTrainingScriptTool(),
+    RunTrainingScriptTool(),
     CheckJobStatusTool(),
     PrepareTrainingDataTool(),
     CreateEvaluatorsTool(),
