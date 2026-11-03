@@ -46,7 +46,12 @@ export function decodeRouteParam(value: string) {
 }
 
 // Duplicate names (legacy data) carry the model id so the URL stays unambiguous.
-export function modelHref(model: ModelSummary, duplicateName: boolean) {
+export function modelHref(model: Pick<ModelSummary, "id" | "name">, duplicateName: boolean) {
   const base = `/models/${encodeURIComponent(model.name)}`;
+  return duplicateName ? `${base}?id=${encodeURIComponent(model.id)}` : base;
+}
+
+export function versionHref(model: Pick<ModelSummary, "id" | "name">, version: number, duplicateName: boolean) {
+  const base = `${modelHref(model, false)}/${version}`;
   return duplicateName ? `${base}?id=${encodeURIComponent(model.id)}` : base;
 }

@@ -56,6 +56,15 @@ export async function apiPostJson<T>(path: string, token: string, body: unknown)
   return (await res.json()) as T;
 }
 
+export async function apiFetchBlob(path: string, token: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  await raiseForStatus(res);
+  return res.blob();
+}
+
 export async function apiDownload(path: string, token: string, fallbackName: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },

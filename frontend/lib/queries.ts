@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiDelete, apiDeleteNoContent, apiDownload, apiGet, apiPatchJson, apiPost, apiPostJson, apiPut, ApiError } from "./api";
+import { apiDelete, apiDeleteNoContent, apiDownload, apiFetchBlob, apiGet, apiPatchJson, apiPost, apiPostJson, apiPut, ApiError } from "./api";
 import { useAccessToken } from "./auth";
 import type {
   ArchivedDeployment,
@@ -167,6 +167,22 @@ export function useDownloadVersionArtifact() {
         token ?? "",
         name,
       ),
+  });
+}
+
+export function useVersionArtifactText(modelId: string, version: number, name: string, enabled: boolean) {
+  const token = useAccessToken();
+  return useQuery<string, ApiError>({
+    queryKey: ["version-artifact-text", token, modelId, version, name],
+    queryFn: async () => {
+      const blob = await apiFetchBlob(
+        `/api/v1/models/${encodeURIComponent(modelId)}/versions/${version}/artifacts/${encodeURIComponent(name)}`,
+        token ?? "",
+      );
+      return blob.text();
+    },
+    enabled: Boolean(token) && enabled,
+    staleTime: Infinity,
   });
 }
 
